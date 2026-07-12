@@ -27,6 +27,51 @@ export interface CaptureSize {
   readonly height: number;
 }
 
+/** A raw (unrounded) width/height pair, e.g. a measured CSS box. */
+export interface Size {
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * Fold a list of measured slide sizes into the single locked capture size: the
+ * per-axis maximum, scaled by pixelRatio and even-rounded (H.264 needs even
+ * dims). Independent max per axis means the locked box fits the widest AND the
+ * tallest slide even when those are different slides. An empty list yields the
+ * 2x2 floor rather than throwing so callers can validate the result.
+ */
+export function maxCaptureSize(
+  sizes: readonly Size[],
+  pixelRatio: number,
+): CaptureSize {
+  let maxWidth = 0;
+  let maxHeight = 0;
+  for (const {width, height} of sizes) {
+    if (width > maxWidth) maxWidth = width;
+    if (height > maxHeight) maxHeight = height;
+  }
+  return captureSizeFor(maxWidth, maxHeight, pixelRatio);
+}
+
+/** Top-left offset (device px) that centers `inner` inside `outer`. */
+export interface CenterOffset {
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Integer top-left offset that centers a smaller captured canvas inside the
+ * fixed backing canvas. Rounded to whole device pixels so drawImage doesn't blur
+ * on a half-pixel seam; clamped at 0 so an over-large inner (rounding slop) pins
+ * to the corner rather than drawing off-canvas.
+ */
+export function centerOffset(outer: CaptureSize, inner: Size): CenterOffset {
+  return {
+    x: Math.max(0, Math.round((outer.width - inner.width) / 2)),
+    y: Math.max(0, Math.round((outer.height - inner.height) / 2)),
+  };
+}
+
 /**
  * Compute the even-rounded capture size from the DOM node's CSS size and the
  * chosen pixelRatio. Both dimensions are rounded down to even independently.
@@ -81,6 +126,38 @@ export function targetBitrate(
 ): number {
   const bitsPerPixel = 0.1;
   return Math.round(width * height * fps * bitsPerPixel);
+}
+
+/**
+ * One probe time (ms) per slide, at the midpoint of that slide's hold segment.
+ * The pre-pass seeks to each of these, lets the DOM settle, and measures — the
+ * hold phase is the fully-revealed, static layout, so it is the largest a slide
+ * ever gets (typing only shrinks content; transitions interpolate between two
+ * holds). Midpoint (not edge) avoids landing on a phase boundary. Slides with no
+ * hold segment (0ms hold) fall back to the segment start so every slide is probed.
+ *
+ * Returns times in slide order; index i is slide i's probe time.
+ */
+export function slideProbeTimesMs(timeline: Timeline): readonly number[] {
+  const holdStartBySlide = new Map<number, {start: number; duration: number}>();
+  for (const segment of timeline.segments) {
+    if (segment.phase !== 'hold') continue;
+    if (!holdStartBySlide.has(segment.slideIndex)) {
+      holdStartBySlide.set(segment.slideIndex, {
+        start: segment.startMs,
+        duration: segment.durationMs,
+      });
+    }
+  }
+
+  const slideCount = holdStartBySlide.size;
+  const times: number[] = [];
+  for (let i = 0; i < slideCount; i++) {
+    const hold = holdStartBySlide.get(i);
+    // Defensive: a slide with no hold segment probes at 0; still ordered by i.
+    times.push(hold ? hold.start + hold.duration / 2 : 0);
+  }
+  return times;
 }
 
 /**

@@ -15,22 +15,48 @@ import {
   activeEditorOf,
 } from '../state/playback/playbackController';
 import {getPlaybackStore} from '../state/playback/playbackStore';
-import {stateAt} from '../state/playback/timeline';
+import {stateAt, type Timeline} from '../state/playback/timeline';
 import {getSlidesStore} from '../state/slides';
 import type {Slide} from '../state/slides/model';
 import {ensureHighlighter, shikiThemeFor} from '../components/AnimationView/shikiHighlighter';
+import {getFrameState} from '../state/editor/frame';
 import {getUiStore} from '../state/ui';
-import {createFrameCapturer, frameExportOptions} from './captureFrame';
+import {
+  compositeCentered,
+  createFrameCapturer,
+  frameExportOptions,
+} from './captureFrame';
 import {createMp4Recorder} from './mp4Encoder';
 import {
   EXPORT_FPS,
-  captureSizeFor,
   frameCount,
   frameDurationMicros,
   frameTimeMs,
   frameTimestampMicros,
   holdReuseMap,
+  maxCaptureSize,
+  slideProbeTimesMs,
+  type CaptureSize,
+  type Size,
 } from './videoExportMath';
+
+/** Neutral dark used to backfill margins when a slide has no solid color set. */
+const DEFAULT_BACKFILL = '#0d0d0d';
+
+/**
+ * Resolve a solid backfill color for the margin around a centered slide. Only
+ * plain CSS color strings (hex / rgb / hsl / named) are used verbatim; asset
+ * URLs, gradients or an unset background fall back to a neutral dark so the
+ * margin never renders as a broken image reference.
+ */
+function resolveBackfillColor(background: string | null | undefined): string {
+  if (!background) return DEFAULT_BACKFILL;
+  const value = background.trim();
+  if (value.startsWith('url(') || value.includes('gradient')) {
+    return DEFAULT_BACKFILL;
+  }
+  return value;
+}
 
 export interface ExportVideoOptions {
   /** The DOM node exported per frame (same node the image exporter snapshots). */
@@ -65,10 +91,38 @@ async function prewarmHighlighter(slides: readonly Slide[]): Promise<void> {
   await ensureHighlighter(langs, [theme]);
 }
 
-/** Compute the even-rounded capture size from the node's CSS box + pixelRatio. */
-function measure(node: HTMLElement, pixelRatio: number) {
+/** Measure the node's current rendered CSS box (unrounded, pre-pixelRatio). */
+function measure(node: HTMLElement): Size {
   const rect = node.getBoundingClientRect();
-  return captureSizeFor(rect.width, rect.height, pixelRatio);
+  return {width: rect.width, height: rect.height};
+}
+
+/**
+ * Pre-pass: probe every slide's rendered size at the midpoint of its hold phase
+ * (the fully-revealed, largest layout) and fold them into one locked capture
+ * size big enough for the widest and tallest slide. O(number of slides) seeks —
+ * independent of frame count — so it does not scale the export time per frame.
+ */
+async function probeCaptureSize(
+  node: HTMLElement,
+  pixelRatio: number,
+  timeline: Timeline,
+  playback: ReturnType<typeof getPlaybackStore>,
+  applyChrome: (tMs: number) => void,
+  settle: () => Promise<void>,
+): Promise<CaptureSize> {
+  const probeTimes = slideProbeTimesMs(timeline);
+  const sizes: Size[] = [];
+  for (const tMs of probeTimes) {
+    playback.setCurrentTimeMs(tMs);
+    applyChrome(tMs);
+    // Two rAFs: one for Solid to commit the reactive DOM, one for layout to
+    // settle (chrome padding/background transitions apply on the next frame).
+    await settle();
+    await settle();
+    sizes.push(measure(node));
+  }
+  return maxCaptureSize(sizes, pixelRatio);
 }
 
 /**
@@ -103,19 +157,26 @@ export async function exportVideo(
     await prewarmHighlighter(slidesStore.state.slides);
 
     const timeline = buildTimelineFromSlides();
+    const frameStore = getFrameState();
 
-    // Measure the LIVE frame only after the CanvasEditor -> AnimationView swap has
-    // settled: flipping isPlaying detaches the editor for a tick, so an immediate
-    // measure catches a collapsed (near-zero) box and yields a 2x2 video. Seek to
-    // the final held frame (the tallest layout — last slide, fully revealed) and
-    // flush before measuring, so the locked capture size fits every frame without
-    // clipping. The size is fixed here and reused for all frames (H.264 needs it).
-    playback.setCurrentTimeMs(timeline.totalDurationMs);
-    applySlideChromeAtTime(timeline.totalDurationMs, timeline);
-    await nextFrame();
-    await nextFrame();
-    const {width, height} = measure(options.node, options.pixelRatio);
-    if (width <= 2 || height <= 2) {
+    // Pre-pass: probe EVERY slide's rendered size and lock a single capture size
+    // big enough for the widest and tallest slide. Earlier code measured only the
+    // LAST slide, so slides with more/longer code (or bigger padding) rendered
+    // larger than the locked size and got cropped/stretched. Probing each slide's
+    // fully-revealed hold layout fixes that; it is O(slides), not O(frames).
+    //
+    // The two-rAF settle also covers the CanvasEditor -> AnimationView swap: after
+    // flipping isPlaying the editor detaches for a tick, so the first measured box
+    // can be collapsed — the per-slide seek + settle re-measures cleanly.
+    const size = await probeCaptureSize(
+      options.node,
+      options.pixelRatio,
+      timeline,
+      playback,
+      tMs => applySlideChromeAtTime(tMs, timeline),
+      nextFrame,
+    );
+    if (size.width <= 2 || size.height <= 2) {
       throw new Error('Could not measure the export frame (empty layout).');
     }
     playback.setCurrentTimeMs(0);
@@ -125,11 +186,21 @@ export async function exportVideo(
     const duration = frameDurationMicros(EXPORT_FPS);
 
     const capture = await createFrameCapturer();
-    const exportOptions = frameExportOptions(width, height, options.pixelRatio);
-    const recorder = await createMp4Recorder(width, height, EXPORT_FPS);
+    // Capture each frame at its own NATURAL size (no forced canvas dims, which
+    // dom-export would stretch — see captureFrame.ts), then composite it centered
+    // onto this fixed-size backing canvas so every encoded frame is `size`.
+    const exportOptions = frameExportOptions(options.pixelRatio);
+    const recorder = await createMp4Recorder(size.width, size.height, EXPORT_FPS);
 
-    // Cache the most recent freshly-captured canvas so hold frames can reuse it.
-    let cachedSourceIndex = -1;
+    const backing = document.createElement('canvas');
+    backing.width = size.width;
+    backing.height = size.height;
+    const backingCtx = backing.getContext('2d');
+    if (!backingCtx) {
+      throw new Error('Could not acquire a 2D context for the export canvas.');
+    }
+
+    // Cache the most recent composited backing canvas so hold frames reuse it.
     let cachedCanvas: HTMLCanvasElement | null = null;
 
     for (let i = 0; i < total; i++) {
@@ -145,8 +216,17 @@ export async function exportVideo(
         playback.setCurrentTimeMs(tMs);
         applySlideChromeAtTime(tMs, timeline);
         await nextFrame();
-        cachedCanvas = await capture(options.node, exportOptions);
-        cachedSourceIndex = i;
+        const source = await capture(options.node, exportOptions);
+        // Fill the margin with the active slide's own frame background so a
+        // smaller centered slide reads as extra padding, not a hard letterbox.
+        const backfill = resolveBackfillColor(frameStore.store.background);
+        cachedCanvas = compositeCentered(
+          backing,
+          backingCtx,
+          size,
+          source,
+          backfill,
+        );
       }
 
       if (!cachedCanvas) {
@@ -169,7 +249,6 @@ export async function exportVideo(
       }
 
       options.onProgress?.(i + 1, total);
-      void cachedSourceIndex; // retained for clarity/debugging
     }
 
     if (options.isCancelled?.()) {

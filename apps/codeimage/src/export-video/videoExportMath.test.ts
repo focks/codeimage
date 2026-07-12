@@ -2,12 +2,15 @@ import {describe, expect, it} from 'vitest';
 import {buildTimeline, stateAt, type PlaybackSettings} from '../state/playback/timeline';
 import {
   captureSizeFor,
+  centerOffset,
   frameCount,
   frameDurationMicros,
   frameTimeMs,
   frameTimestampMicros,
   holdReuseMap,
+  maxCaptureSize,
   roundToEven,
+  slideProbeTimesMs,
   targetBitrate,
 } from './videoExportMath';
 
@@ -37,6 +40,58 @@ describe('captureSizeFor', () => {
     expect(captureSizeFor(401, 301, 1)).toEqual({width: 400, height: 300});
     // 333.5 * 1 = 333 -> 332
     expect(captureSizeFor(333.5, 333.5, 1)).toEqual({width: 332, height: 332});
+  });
+});
+
+describe('maxCaptureSize', () => {
+  it('takes the per-axis max across slides, scaled and even-rounded', () => {
+    // Widest slide and tallest slide are different entries.
+    const sizes = [
+      {width: 400, height: 300},
+      {width: 500, height: 200},
+      {width: 300, height: 500},
+    ];
+    expect(maxCaptureSize(sizes, 1)).toEqual({width: 500, height: 500});
+    expect(maxCaptureSize(sizes, 2)).toEqual({width: 1000, height: 1000});
+  });
+
+  it('even-rounds the folded max (odd measured dims round down)', () => {
+    expect(maxCaptureSize([{width: 401, height: 301}], 1)).toEqual({
+      width: 400,
+      height: 300,
+    });
+  });
+
+  it('returns the 2x2 floor for an empty list instead of throwing', () => {
+    expect(maxCaptureSize([], 1)).toEqual({width: 2, height: 2});
+  });
+});
+
+describe('centerOffset', () => {
+  it('centers a smaller inner box in the outer box', () => {
+    expect(centerOffset({width: 800, height: 600}, {width: 400, height: 300})).toEqual({
+      x: 200,
+      y: 150,
+    });
+  });
+
+  it('rounds a half-pixel gap to a whole device pixel', () => {
+    // (801 - 400) / 2 = 200.5 -> 201 ; keeps drawImage on integer pixels.
+    expect(centerOffset({width: 801, height: 600}, {width: 400, height: 300})).toEqual({
+      x: 201,
+      y: 150,
+    });
+  });
+
+  it('clamps to the corner when inner meets or exceeds outer', () => {
+    expect(centerOffset({width: 400, height: 300}, {width: 400, height: 300})).toEqual({
+      x: 0,
+      y: 0,
+    });
+    expect(centerOffset({width: 400, height: 300}, {width: 420, height: 320})).toEqual({
+      x: 0,
+      y: 0,
+    });
   });
 });
 
@@ -152,5 +207,48 @@ describe('holdReuseMap', () => {
       const {phase} = stateAt(timeline, frameTimeMs(i, 30));
       if (phase === 'typing') expect(src).toBe(i);
     });
+  });
+});
+
+describe('slideProbeTimesMs', () => {
+  const settings: PlaybackSettings = {
+    typingIntro: false,
+    typingCharsPerSec: 10,
+    holdMs: 1000,
+    transitionMs: 500,
+  };
+
+  it('returns one probe time per slide at its hold midpoint', () => {
+    // 3 slides: hold(1000) tr(500) hold(1000) tr(500) hold(1000).
+    // holds start at 0, 1500, 3000 -> midpoints 500, 2000, 3500.
+    const timeline = buildTimeline([10, 10, 10], settings);
+    expect(slideProbeTimesMs(timeline)).toEqual([500, 2000, 3500]);
+  });
+
+  it('lands each probe inside the intended slide hold phase', () => {
+    const timeline = buildTimeline([10, 10, 10], settings);
+    const times = slideProbeTimesMs(timeline);
+    times.forEach((tMs, slide) => {
+      const {phase, slideIndex} = stateAt(timeline, tMs);
+      expect(phase).toBe('hold');
+      expect(slideIndex).toBe(slide);
+    });
+  });
+
+  it('accounts for the typing intro when placing slide 0', () => {
+    // typingIntro shifts slide 0's hold later; probe must still land in hold.
+    const withTyping: PlaybackSettings = {...settings, typingIntro: true};
+    const timeline = buildTimeline([50, 10], withTyping);
+    const times = slideProbeTimesMs(timeline);
+    times.forEach((tMs, slide) => {
+      const {phase, slideIndex} = stateAt(timeline, tMs);
+      expect(phase).toBe('hold');
+      expect(slideIndex).toBe(slide);
+    });
+  });
+
+  it('yields a single probe for a one-slide deck', () => {
+    const timeline = buildTimeline([10], settings);
+    expect(slideProbeTimesMs(timeline)).toEqual([500]);
   });
 });

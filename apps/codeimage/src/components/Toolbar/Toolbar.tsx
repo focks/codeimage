@@ -14,6 +14,7 @@ import {CollectionIcon} from '../Icons/Collection';
 import {sidebarLogo} from '../Scaffold/Sidebar/Sidebar.css';
 import {UserBadge} from '../UserBadge/UserBadge';
 import {ExportButton} from './ExportButton';
+import {ExportVideoButton} from './ExportVideoButton';
 import {PlayButton} from './PlayButton';
 import {ShareButton} from './ShareButton';
 import * as styles from './Toolbar.css';
@@ -82,6 +83,8 @@ export function Toolbar(props: VoidProps<ToolbarProps>) {
               <PlayButton />
 
               <ShareButton showLabel={false} />
+
+              <ExportVideoButton canvasRef={props.canvasRef} />
 
               <ExportButton canvasRef={props.canvasRef} />
             </Show>

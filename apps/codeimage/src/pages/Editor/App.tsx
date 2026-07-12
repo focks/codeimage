@@ -3,11 +3,13 @@ import {getActiveEditorStore} from '@codeimage/store/editor/activeEditor';
 import {getEditorSyncAdapter} from '@codeimage/store/editor/createEditorSync';
 import {getFrameState} from '@codeimage/store/editor/frame';
 import {dispatchRandomTheme} from '@codeimage/store/effects/onThemeChange';
+import {getSlidesStore} from '@codeimage/store/slides';
 import {adaptiveFullScreenHeight, Box, HStack, PortalHost} from '@codeimage/ui';
 import {Button} from '@codeui/kit';
 import {useModality} from '@core/hooks/isMobile';
 import {createSignal, lazy, onMount, Show, Suspense} from 'solid-js';
 import {BottomBar} from '../../components/BottomBar/BottomBar';
+import {Filmstrip} from '../../components/Filmstrip/Filmstrip';
 import {Footer} from '../../components/Footer/Footer';
 import {FrameHandler} from '../../components/Frame/FrameHandler';
 import {FrameSkeleton} from '../../components/Frame/FrameSkeleton';
@@ -42,6 +44,8 @@ export function App() {
   const frameStore = getFrameState();
   const exportCanvasStore = getExportCanvasStore();
   const {readOnly, clone} = getEditorSyncAdapter()!;
+  // Initialize slides store — must happen inside a reactive context (component body)
+  getSlidesStore();
   onMount(() => exportCanvasStore.initCanvas(frameRef));
 
   return (
@@ -119,6 +123,9 @@ export function App() {
             </Show>
             <Footer />
           </SuspenseEditorItem>
+          <Show when={modality === 'full'}>
+            <Filmstrip />
+          </Show>
         </Canvas>
         <Show when={!readOnly()}>
           <Show

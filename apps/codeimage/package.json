@@ -15,10 +15,12 @@
     "pre-commit-eslint": "oxlint --fix",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@mdx-js/mdx": "catalog:next",
+    "vitest": "catalog:next",
     "@mdx-js/rollup": "catalog:next",
     "@mswjs/data": "^0.16.2",
     "@types/downloadjs": "^1.4.6",

@@ -4,7 +4,6 @@ import {getPlaybackStore} from '@codeimage/store/playback/playbackStore';
 import {getSlidesStore} from '@codeimage/store/slides';
 import type {SegmentedFieldItem} from '@codeimage/ui';
 import {
-  Box,
   FieldLabel,
   FieldLabelHint,
   FlexField,
@@ -17,8 +16,9 @@ import {Button, Dialog, DialogPanelContent, DialogPanelFooter} from '@codeui/kit
 import {useModality} from '@core/hooks/isMobile';
 import {SegmentedField} from '@ui/SegmentedField/SegmentedField';
 import {createMemo, createSignal, Show} from 'solid-js';
-import {exportVideo} from '../../export-video/exportVideo';
-import {EXPORT_FPS} from '../../export-video/videoExportMath';
+import {type ExportFormat, exportVideo} from '../../export-video/exportVideo';
+import {GIF_MAX_FPS} from '../../export-video/gifHelpers';
+import {wouldExceedLimit} from '../../export-video/scaleHelpers';
 import {FilmIcon} from '../Icons/Film';
 import * as styles from './ExportVideoDialog.css';
 
@@ -75,6 +75,8 @@ interface ExportVideoDialogProps {
 function ExportVideoDialog(props: ExportVideoDialogProps) {
   const exportCanvasStore = getExportCanvasStore();
   const [pixelRatio, setPixelRatio] = createSignal<number>(1);
+  const [fps, setFps] = createSignal<number>(30);
+  const [format, setFormat] = createSignal<ExportFormat>('mp4');
   const [exporting, setExporting] = createSignal(false);
   const [progress, setProgress] = createSignal({done: 0, total: 0});
 
@@ -83,9 +85,33 @@ function ExportVideoDialog(props: ExportVideoDialogProps) {
     () => buildTimelineFromSlides().totalDurationMs,
   );
 
+  // Clamp warning: show when selected scale would exceed 4096 px on any axis.
+  const scaleWouldClamp = createMemo(() => {
+    const node = props.canvasRef;
+    if (!node) return false;
+    const {width, height} = node.getBoundingClientRect();
+    return wouldExceedLimit(width, height, pixelRatio());
+  });
+
+  // GIF forces fps to its max; MP4 uses the user's choice.
+  const effectiveFps = createMemo(() =>
+    format() === 'gif' ? GIF_MAX_FPS : fps(),
+  );
+
   const pixelRatioItems: SegmentedFieldItem<number>[] = [
     {label: '1x', value: 1},
     {label: '2x', value: 2},
+    {label: '4x', value: 4},
+  ];
+
+  const fpsItems: SegmentedFieldItem<number>[] = [
+    {label: '30', value: 30},
+    {label: '60', value: 60},
+  ];
+
+  const formatItems: SegmentedFieldItem<ExportFormat>[] = [
+    {label: 'MP4', value: 'mp4'},
+    {label: 'GIF', value: 'gif'},
   ];
 
   const percent = () => {
@@ -123,20 +149,25 @@ function ExportVideoDialog(props: ExportVideoDialogProps) {
       const result = await exportVideo({
         node,
         pixelRatio: pixelRatio(),
+        fps: effectiveFps(),
+        format: format(),
         onProgress: (done, total) => setProgress({done, total}),
         isCancelled: () => cancelled,
         fileName: 'codeimage',
       });
 
       if (result.cancelled) {
-        toast.success('Video export cancelled.', {position: 'bottom-center'});
+        toast.success('Export cancelled.', {position: 'bottom-center'});
       } else {
-        toast.success('Video exported.', {position: 'bottom-center'});
+        toast.success(
+          format() === 'gif' ? 'GIF exported.' : 'Video exported.',
+          {position: 'bottom-center'},
+        );
         props.onOpenChange(false);
       }
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Video export failed.';
+        error instanceof Error ? error.message : 'Export failed.';
       toast.error(message, {position: 'bottom-center'});
     } finally {
       setExporting(false);
@@ -155,19 +186,52 @@ function ExportVideoDialog(props: ExportVideoDialogProps) {
       <DialogPanelContent>
         <VStack spacing={'6'}>
           <FlexField size={'md'}>
-            <FieldLabel size={'sm'}>Frame rate</FieldLabel>
-            <Text size={'sm'}>{EXPORT_FPS} fps</Text>
-          </FlexField>
-
-          <FlexField size={'md'}>
-            <FieldLabel size={'sm'}>Resolution</FieldLabel>
+            <FieldLabel size={'sm'}>Format</FieldLabel>
             <SegmentedField
               autoWidth
               size={'md'}
-              value={pixelRatio()}
-              onChange={setPixelRatio}
-              items={pixelRatioItems}
+              value={format()}
+              onChange={setFormat}
+              items={formatItems}
             />
+          </FlexField>
+
+          <FlexField size={'md'}>
+            <div class={styles.summaryRow}>
+              <FieldLabel size={'sm'}>Frame rate</FieldLabel>
+              <Show
+                when={format() !== 'gif'}
+                fallback={
+                  <Text size={'sm'}>{GIF_MAX_FPS} fps (GIF max)</Text>
+                }
+              >
+                <SegmentedField
+                  autoWidth
+                  size={'md'}
+                  value={fps()}
+                  onChange={setFps}
+                  items={fpsItems}
+                />
+              </Show>
+            </div>
+          </FlexField>
+
+          <FlexField size={'md'}>
+            <div class={styles.summaryRow}>
+              <FieldLabel size={'sm'}>Resolution</FieldLabel>
+              <VStack spacing={'1'}>
+                <SegmentedField
+                  autoWidth
+                  size={'md'}
+                  value={pixelRatio()}
+                  onChange={setPixelRatio}
+                  items={pixelRatioItems}
+                />
+                <Show when={scaleWouldClamp()}>
+                  <Text size={'xs'}>Clamped to 4096 px limit</Text>
+                </Show>
+              </VStack>
+            </div>
           </FlexField>
 
           <FlexField size={'md'}>

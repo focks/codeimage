@@ -495,6 +495,9 @@ importers:
       downloadjs:
         specifier: ^1.4.7
         version: 1.4.7
+      gifenc:
+        specifier: ^1.0.3
+        version: 1.0.3
       idb-keyval:
         specifier: ^6.2.2
         version: 6.2.2
@@ -6744,6 +6747,9 @@ packages:
     resolution: {integrity: sha512-b1O07XYq8eRuVzBNgJLstU6FYc1tS6wnMtF1I1D9lE8LxZSOGZ7LhxN54yPP6mGw5f2CkXY2BQUL9Fx41qvcIg==}
     engines: {node: '>= 14'}
 
+  gifenc@1.0.3:
+    resolution: {integrity: sha512-xdr6AdrfGBcfzncONUOlXMBuc5wJDtOueE3c5rdG0oNgtINLD+f2iFZltrBRZYzACRbKr+mSVU/x98zv2u3jmw==}
+
   giget@2.0.0:
     resolution: {integrity: sha512-L5bGsVkxJbJgdnwyuheIunkGatUF/zssUoxxjACCseZYAVbaqdh9Tsmmlkl8vYan09H7sbvKt4pS8GqKLBrEzA==}
     hasBin: true
@@ -11775,7 +11781,7 @@ snapshots:
       '@vanilla-extract/dynamic': 2.1.5
       '@vanilla-extract/recipes': 0.5.7(@vanilla-extract/css@1.20.0)
       '@vanilla-extract/vite-plugin': 4.0.20(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.32.0)(sass@1.98.0)(terser@5.46.1)(tsx@4.21.0)(vite@8.0.3(@types/node@25.5.0)(esbuild@0.27.4)(jiti@2.6.1)(sass@1.98.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.3))(yaml@2.8.3)
-      example-basic: link:../../../../riccardoperra/WebstormProjects/pipelineui/packages/app
+      example-basic: link:../../../../../../../riccardoperra/WebstormProjects/pipelineui/packages/app
       motion: 10.18.0
       polished: 4.3.1
       solid-js: 1.9.12
@@ -17354,6 +17360,8 @@ snapshots:
       debug: 4.4.3
     transitivePeerDependencies:
       - supports-color
+
+  gifenc@1.0.3: {}
 
   giget@2.0.0:
     dependencies:

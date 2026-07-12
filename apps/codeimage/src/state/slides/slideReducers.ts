@@ -75,3 +75,28 @@ export function reduceSetActiveSlide(
   if (index === state.activeSlideIndex) return state;
   return {...state, activeSlideIndex: index};
 }
+
+/** Per-slide playback overrides patchable via the filmstrip settings popover. */
+export type SlideSettingsPatch = Pick<
+  Slide,
+  'transitionIn' | 'holdMs' | 'typewriterCharMs'
+>;
+
+/**
+ * Returns state with the slide at `index` merged with `patch` (immutably). A
+ * patch value of `undefined` clears that override back to "inherit global". No-op
+ * if `index` is out of range.
+ */
+export function reduceUpdateSlideSettings(
+  state: SlidesState,
+  index: number,
+  patch: SlideSettingsPatch,
+): SlidesState {
+  const target = state.slides[index];
+  if (!target) return state;
+  const updated: Slide = {...target, ...patch};
+  return {
+    ...state,
+    slides: state.slides.map((slide, i) => (i === index ? updated : slide)),
+  };
+}

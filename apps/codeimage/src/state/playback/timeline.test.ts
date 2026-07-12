@@ -1,10 +1,13 @@
 import {describe, expect, it} from 'vitest';
 import {
   buildTimeline,
+  charMsFromCharsPerSec,
   stateAt,
   typedCharCount,
+  typewriterDurationMs,
   typingDurationMs,
   type PlaybackSettings,
+  type SlideTimelineInput,
 } from './timeline';
 
 const settings: PlaybackSettings = {
@@ -12,6 +15,7 @@ const settings: PlaybackSettings = {
   typingCharsPerSec: 10, // 10 chars/sec => 100ms per char
   holdMs: 1000,
   transitionMs: 500,
+  defaultTransition: 'morph',
 };
 
 const noTyping: PlaybackSettings = {...settings, typingIntro: false};
@@ -192,6 +196,138 @@ describe('stateAt', () => {
     });
     // Nothing to animate: the static frame is time-invariant.
     expect(stateAt(empty, 1000)).toMatchObject({phase: 'hold', progress: 0});
+  });
+});
+
+describe('typewriterDurationMs', () => {
+  it('is charCount * charMs', () => {
+    expect(typewriterDurationMs(20, 50)).toBe(1000);
+    expect(typewriterDurationMs(3, 100)).toBe(300);
+  });
+  it('collapses to 0 for empty code or non-positive per-char time', () => {
+    expect(typewriterDurationMs(0, 50)).toBe(0);
+    expect(typewriterDurationMs(20, 0)).toBe(0);
+    expect(typewriterDurationMs(-1, 50)).toBe(0);
+  });
+});
+
+describe('charMsFromCharsPerSec', () => {
+  it('inverts a chars-per-second rate into ms-per-char', () => {
+    expect(charMsFromCharsPerSec(10)).toBe(100);
+    expect(charMsFromCharsPerSec(50)).toBe(20);
+  });
+  it('is 0 for a non-positive rate', () => {
+    expect(charMsFromCharsPerSec(0)).toBe(0);
+    expect(charMsFromCharsPerSec(-5)).toBe(0);
+  });
+});
+
+describe('buildTimeline (per-slide inputs)', () => {
+  const input = (
+    charCount: number,
+    entryMode: SlideTimelineInput['entryMode'],
+    extra: Partial<SlideTimelineInput> = {},
+  ): SlideTimelineInput => ({charCount, entryMode, ...extra});
+
+  it('slide 0 typewriter entry sizes by its own char count and per-char timing', () => {
+    // 10 chars/sec => 100ms/char; 8 chars => 800ms typewriter intro.
+    const timeline = buildTimeline(
+      [input(8, 'typewriter'), input(4, 'morph')],
+      settings,
+    );
+    expect(timeline.segments.map(s => [s.phase, s.mode, s.durationMs])).toEqual([
+      ['typing', 'typewriter', 800],
+      ['hold', 'none', 1000],
+      ['transition', 'morph', 500],
+      ['hold', 'none', 1000],
+    ]);
+  });
+
+  it('per-slide typewriterCharMs overrides the derived global timing', () => {
+    const timeline = buildTimeline(
+      [input(8, 'typewriter', {typewriterCharMs: 25})],
+      settings,
+    );
+    // 8 chars * 25ms = 200ms, ignoring the 100ms/char global rate.
+    expect(timeline.segments[0]).toMatchObject({
+      phase: 'typing',
+      durationMs: 200,
+    });
+  });
+
+  it("slide 0 'none' entry contributes no typing segment (hard cut)", () => {
+    const timeline = buildTimeline(
+      [input(8, 'none'), input(4, 'fade')],
+      settings,
+    );
+    expect(timeline.segments.map(s => [s.phase, s.mode])).toEqual([
+      ['hold', 'none'],
+      ['transition', 'fade'],
+      ['hold', 'none'],
+    ]);
+  });
+
+  it('mixed entry modes each carry their mode + leaving index', () => {
+    const timeline = buildTimeline(
+      [
+        input(10, 'typewriter'), // slide 0 typing 1000ms
+        input(6, 'fade'), // transition into slide 1
+        input(6, 'slide'), // transition into slide 2
+      ],
+      settings,
+    );
+    expect(
+      timeline.segments.map(s => [s.phase, s.mode, s.slideIndex]),
+    ).toEqual([
+      ['typing', 'typewriter', 0],
+      ['hold', 'none', 0],
+      ['transition', 'fade', 0], // leaving slide 0 -> entering slide 1
+      ['hold', 'none', 1],
+      ['transition', 'slide', 1], // leaving slide 1 -> entering slide 2
+      ['hold', 'none', 2],
+    ]);
+  });
+
+  it("a 'none' transition between slides drops the transition segment", () => {
+    const timeline = buildTimeline(
+      [input(0, 'none'), input(6, 'none'), input(6, 'morph')],
+      settings,
+    );
+    // slide0 none-entry (no typing), holds; slide1 none-transition (cut), holds;
+    // slide2 morph transition, holds.
+    expect(timeline.segments.map(s => [s.phase, s.mode])).toEqual([
+      ['hold', 'none'], // slide 0 hold
+      ['hold', 'none'], // slide 1 hold (no transition in)
+      ['transition', 'morph'], // into slide 2
+      ['hold', 'none'], // slide 2 hold
+    ]);
+  });
+
+  it('per-slide holdMs override wins over the global hold', () => {
+    const timeline = buildTimeline(
+      [input(0, 'none', {holdMs: 250}), input(4, 'morph', {holdMs: 3000})],
+      settings,
+    );
+    const holds = timeline.segments.filter(s => s.phase === 'hold');
+    expect(holds.map(s => s.durationMs)).toEqual([250, 3000]);
+  });
+
+  it('stateAt reports the segment mode for a transition frame', () => {
+    const timeline = buildTimeline(
+      [input(10, 'typewriter'), input(6, 'fade')],
+      settings,
+    );
+    // typing[0,1000) hold[1000,2000) transition[2000,2500) hold[2500,3500)
+    expect(stateAt(timeline, 2250)).toMatchObject({
+      phase: 'transition',
+      mode: 'fade',
+      slideIndex: 0,
+    });
+    expect(stateAt(timeline, 500)).toMatchObject({
+      phase: 'typing',
+      mode: 'typewriter',
+    });
+    expect(stateAt(timeline, 1500)).toMatchObject({phase: 'hold', mode: 'none'});
   });
 });
 

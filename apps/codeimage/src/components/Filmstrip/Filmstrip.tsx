@@ -2,6 +2,7 @@ import {getSlidesStore} from '@codeimage/store/slides';
 import {For} from 'solid-js';
 import clsx from 'clsx';
 import * as styles from './Filmstrip.css';
+import {SlideSettingsPopover} from './SlideSettingsPopover';
 
 // ponytail: numbered cards only — real thumbnails when playback/render lands
 
@@ -26,6 +27,7 @@ export function Filmstrip() {
 
               {/* Per-card hover actions */}
               <div class={styles.slideActions} onClick={e => e.stopPropagation()}>
+                <SlideSettingsPopover index={index()} slide={slide} />
                 <button
                   class={styles.actionIconBtn}
                   title="Duplicate slide"

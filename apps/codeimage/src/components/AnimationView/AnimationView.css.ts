@@ -35,6 +35,23 @@ export const token = style({
   whiteSpace: 'pre',
 });
 
+// One line in the line-based `slide` transition. Each line is its own block so
+// it can be offset horizontally independent of the others.
+export const slideLineLayer = style({
+  position: 'absolute',
+  inset: 0,
+  margin: 0,
+  textAlign: 'left',
+  fontVariantLigatures: 'none',
+  willChange: 'transform, opacity',
+});
+
+export const slideLine = style({
+  display: 'block',
+  whiteSpace: 'pre',
+  willChange: 'transform, opacity',
+});
+
 // A blinking caret shown at the end of the typed prefix.
 export const caret = style({
   display: 'inline-block',

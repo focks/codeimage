@@ -4,11 +4,37 @@ import type {
   PersistedTerminalState,
 } from '@codeimage/store/editor/model';
 
+/**
+ * How a slide enters (its code-change animation), snappify-style. `inherit` means
+ * "use the global default transition mode" (which itself resolves to a concrete
+ * mode). The remaining values are the five concrete entry animations. Slide 0's
+ * entry types from empty; later slides animate the change from the previous slide.
+ */
+export type SlideTransitionIn =
+  | 'inherit'
+  | 'none'
+  | 'fade'
+  | 'slide'
+  | 'morph'
+  | 'typewriter';
+
+/**
+ * Per-slide playback overrides (v3). Every field is optional; `undefined` means
+ * "inherit the global playback setting". Storing these on the slide keeps the
+ * timeline a pure function of slide data + global defaults, so preview and video
+ * export honour them through the same buildTimelineFromSlides path.
+ */
 export interface Slide {
   id: string;
   frame: PersistedFrameState;
   terminal: PersistedTerminalState;
   editor: PersistedEditorState;
+  /** How this slide enters. `undefined`/`'inherit'` => global default mode. */
+  transitionIn?: SlideTransitionIn;
+  /** Per-slide hold duration override in ms. `undefined` => global holdMs. */
+  holdMs?: number;
+  /** Typewriter timing as ms-per-character. `undefined` => derive from global cps. */
+  typewriterCharMs?: number;
 }
 
 export interface SlidesState {
@@ -26,4 +52,6 @@ export interface PersistedSlidesState {
 // missing min-width/min-height to 0 (off) when hydrating pre-v2 slide data.
 export const SLIDES_IDB_KEY = 'slides$v1';
 // v2 adds per-slide frame minWidth/minHeight to PersistedFrameState.
-export const SLIDES_VERSION = '2';
+// v3 adds per-slide transitionIn/holdMs/typewriterCharMs overrides. Pre-v3 slides
+// simply lack these keys, which reads as "inherit global" — no coercion needed.
+export const SLIDES_VERSION = '3';

@@ -19,6 +19,8 @@ import {
   reduceRemoveSlide,
   reduceReorderSlide,
   reduceSetActiveSlide,
+  reduceUpdateSlideSettings,
+  type SlideSettingsPatch,
 } from './slideReducers';
 
 /** Build a snapshot of the live stores into a Slide. */
@@ -71,12 +73,18 @@ export function createSlidesStore() {
     const current = state();
     const slide = current.slides[current.activeSlideIndex];
     if (!slide) return;
-    const updated: Slide = snapshotLiveStores(
-      slide.id,
-      frameStore,
-      terminalStore,
-      editorStore,
-    );
+    // Per-slide playback overrides (transitionIn/holdMs/typewriterCharMs) live
+    // only on the Slide, not in any live store, so re-snapshotting from the live
+    // stores alone would drop them. Preserve them by spreading the prior slide.
+    const updated: Slide = {
+      ...slide,
+      ...snapshotLiveStores(
+        slide.id,
+        frameStore,
+        terminalStore,
+        editorStore,
+      ),
+    };
     setState(s => ({
       ...s,
       slides: s.slides.map((sl, i) =>
@@ -149,6 +157,13 @@ export function createSlidesStore() {
     }
   }
 
+  // Patch a slide's per-slide playback overrides (transitionIn/hold/typewriter).
+  // Pure metadata on the slide — no live-store reload needed; the `on(state)`
+  // effect persists the change.
+  function updateSlideSettings(index: number, patch: SlideSettingsPatch): void {
+    setState(s => reduceUpdateSlideSettings(s, index, patch));
+  }
+
   // ── Lifecycle ────────────────────────────────────────────────────────────
   onMount(async () => {
     let loaded: PersistedSlidesState | undefined;
@@ -219,6 +234,7 @@ export function createSlidesStore() {
       removeSlide,
       reorderSlide,
       setActiveSlide,
+      updateSlideSettings,
     },
   } as const;
 }

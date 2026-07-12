@@ -1,13 +1,24 @@
 import {getPlaybackStore} from '@codeimage/store/playback/playbackStore';
 import {PLAYBACK_SETTINGS_BOUNDS} from '@codeimage/store/playback/model';
-import {NumberField} from '@codeui/kit';
+import {DEFAULT_TRANSITION, type EntryMode} from '@codeimage/store/playback/timeline';
+import {createSelectOptions, NumberField, Select} from '@codeui/kit';
 import {SegmentedField} from '@ui/SegmentedField/SegmentedField';
 import type {ParentComponent} from 'solid-js';
 import {PanelHeader} from './PanelHeader';
 import {PanelRow, TwoColumnPanelRow} from './PanelRow';
 
-// Global playback settings (v1): typing intro toggle + typing speed, hold, and
-// transition durations. Kept global rather than per-slide, per the phase-2 spec.
+// Concrete default transition modes (no `inherit` — this IS the inherited value).
+const DEFAULT_TRANSITION_OPTIONS: readonly {label: string; value: EntryMode}[] = [
+  {label: 'None', value: 'none'},
+  {label: 'Fade', value: 'fade'},
+  {label: 'Slide', value: 'slide'},
+  {label: 'Morph', value: 'morph'},
+  {label: 'Typewriter', value: 'typewriter'},
+];
+
+// Global playback DEFAULTS. Each slide can override these via its filmstrip gear;
+// a slide that inherits uses the values configured here. `typingIntro` = "slide 1
+// types itself in by default"; `defaultTransition` = the mode inheriting slides use.
 export const PlaybackSettingsForm: ParentComponent = () => {
   const playback = getPlaybackStore();
   const bounds = PLAYBACK_SETTINGS_BOUNDS;
@@ -17,11 +28,34 @@ export const PlaybackSettingsForm: ParentComponent = () => {
     if (typeof value === 'number' && !Number.isNaN(value)) fn(value);
   };
 
+  const defaultTransitionSelect = createSelectOptions(
+    DEFAULT_TRANSITION_OPTIONS,
+    {key: 'label', valueKey: 'value'},
+  );
+
   return (
     <>
       <PanelHeader label={'Playback'} />
 
-      <PanelRow for={'typingIntroField'} label={'Typing intro'}>
+      <PanelRow for={'defaultTransitionField'} label={'Default transition'}>
+        <TwoColumnPanelRow>
+          {/*@ts-expect-error Fix @codeui/kit select types*/}
+          <Select
+            options={defaultTransitionSelect.options()}
+            multiple={false}
+            {...defaultTransitionSelect.props()}
+            {...defaultTransitionSelect.controlled(
+              () => playback.settings.defaultTransition ?? DEFAULT_TRANSITION,
+              mode => playback.actions.setDefaultTransition(mode as EntryMode),
+            )}
+            aria-label={'Default transition'}
+            size={'xs'}
+            id={'defaultTransitionField'}
+          />
+        </TwoColumnPanelRow>
+      </PanelRow>
+
+      <PanelRow for={'typingIntroField'} label={'Type in slide 1'}>
         <TwoColumnPanelRow>
           <SegmentedField
             adapt
@@ -51,7 +85,7 @@ export const PlaybackSettingsForm: ParentComponent = () => {
         </TwoColumnPanelRow>
       </PanelRow>
 
-      <PanelRow for={'holdField'} label={'Hold (ms)'}>
+      <PanelRow for={'holdField'} label={'Default hold (ms)'}>
         <TwoColumnPanelRow>
           <NumberField
             size={'xs'}
@@ -65,7 +99,7 @@ export const PlaybackSettingsForm: ParentComponent = () => {
         </TwoColumnPanelRow>
       </PanelRow>
 
-      <PanelRow for={'transitionField'} label={'Transition (ms)'}>
+      <PanelRow for={'transitionField'} label={'Transition (ms)'} /* fade/slide/morph duration */>
         <TwoColumnPanelRow>
           <NumberField
             size={'xs'}

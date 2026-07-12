@@ -3,7 +3,10 @@ export {
   stateAt,
   typedCharCount,
   typingDurationMs,
+  typewriterDurationMs,
+  charMsFromCharsPerSec,
   slideCodeLength,
+  DEFAULT_TRANSITION,
 } from './timeline';
 export type {
   PlaybackSettings,
@@ -11,7 +14,10 @@ export type {
   PlaybackFrameState,
   Timeline,
   TimelineSegment,
+  EntryMode,
+  SlideTimelineInput,
 } from './timeline';
+export {resolveEntryMode, resolveSlideInputs} from './slideAnimation';
 export {getPlaybackStore, createPlaybackStore} from './playbackStore';
 export {
   startPlayback,

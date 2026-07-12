@@ -16,7 +16,19 @@ export interface PlaybackSettings {
   readonly holdMs: number;
   /** Magic-move transition duration between adjacent slides, in milliseconds. */
   readonly transitionMs: number;
+  /**
+   * Default entry animation used when a slide's `transitionIn` is `inherit`.
+   * Concrete mode only — never `inherit`. Optional so pre-existing settings
+   * fixtures stay valid; readers fall back to `DEFAULT_TRANSITION` when absent.
+   */
+  readonly defaultTransition?: EntryMode;
 }
+
+/** Fallback default entry mode when `settings.defaultTransition` is unset. */
+export const DEFAULT_TRANSITION: EntryMode = 'morph';
+
+/** The concrete entry animations a slide can play (no `inherit` here). */
+export type EntryMode = 'none' | 'fade' | 'slide' | 'morph' | 'typewriter';
 
 export type PlaybackPhase = 'typing' | 'hold' | 'transition';
 
@@ -26,6 +38,11 @@ export interface PlaybackFrameState {
   readonly phase: PlaybackPhase;
   /** Progress within the current phase, clamped to 0..1. */
   readonly progress: number;
+  /**
+   * The entry animation in effect for the current phase. For `typing`/`transition`
+   * this is the resolved mode of the entering slide; for `hold` it is `'none'`.
+   */
+  readonly mode: EntryMode;
   /** Total timeline duration in milliseconds. */
   readonly totalDurationMs: number;
 }
@@ -36,11 +53,26 @@ export interface TimelineSegment {
   readonly phase: PlaybackPhase;
   readonly startMs: number;
   readonly durationMs: number;
+  /** Entry mode driving this segment's render (`'none'` for holds). */
+  readonly mode: EntryMode;
 }
 
 export interface Timeline {
   readonly segments: readonly TimelineSegment[];
   readonly totalDurationMs: number;
+}
+
+/**
+ * Per-slide inputs for the timeline. `charCount` sizes typewriter entries;
+ * `entryMode` is the already-resolved concrete mode (inherit chains collapsed by
+ * the caller). `holdMs`/`typewriterCharMs` are per-slide overrides — `undefined`
+ * falls back to the matching global setting.
+ */
+export interface SlideTimelineInput {
+  readonly charCount: number;
+  readonly entryMode: EntryMode;
+  readonly holdMs?: number;
+  readonly typewriterCharMs?: number;
 }
 
 /** Length of the code string for a slide's active editor tab. */
@@ -49,8 +81,28 @@ export function slideCodeLength(code: string): number {
 }
 
 /**
- * Duration of the typing intro for a given code length. Zero-length code (or a
- * non-positive typing rate) collapses to a 0ms segment so the timeline stays valid.
+ * Duration of a typewriter entry for a given code length. Times as ms-per-char
+ * (snappify's model): `charMs` per character. Zero-length code or a non-positive
+ * rate collapses to a 0ms segment so the timeline stays valid.
+ */
+export function typewriterDurationMs(charCount: number, charMs: number): number {
+  if (charCount <= 0 || charMs <= 0) return 0;
+  return charCount * charMs;
+}
+
+/**
+ * Convert a global chars-per-second rate into ms-per-character. Non-positive
+ * rates yield 0 (a collapsed typewriter entry). Kept so a slide with no explicit
+ * `typewriterCharMs` derives its timing from the global typing speed.
+ */
+export function charMsFromCharsPerSec(charsPerSec: number): number {
+  if (charsPerSec <= 0) return 0;
+  return 1000 / charsPerSec;
+}
+
+/**
+ * Duration of the typing intro for a given code length. Retained for the legacy
+ * global model + existing tests: `charCount / charsPerSec * 1000`.
  */
 export function typingDurationMs(
   charCount: number,
@@ -61,18 +113,80 @@ export function typingDurationMs(
 }
 
 /**
- * Build a timeline from the per-slide code lengths and global settings.
- *
- * Structure per slide i (0-based):
- *   [typing? (only i===0 && typingIntro)] -> hold -> [transition (only if i < last)]
- *
- * `codeLengths[i]` is the character count of slide i's active-editor code, used
- * only to size the typing intro of the first slide.
+ * Resolve a slide's typewriter entry duration: prefer the per-slide ms-per-char
+ * override, else derive ms-per-char from the global chars-per-second setting.
  */
+function typewriterEntryDurationMs(
+  slide: SlideTimelineInput,
+  settings: PlaybackSettings,
+): number {
+  const charMs =
+    slide.typewriterCharMs != null && slide.typewriterCharMs > 0
+      ? slide.typewriterCharMs
+      : charMsFromCharsPerSec(settings.typingCharsPerSec);
+  return typewriterDurationMs(slide.charCount, charMs);
+}
+
+/** Resolved hold duration for a slide: per-slide override, else global. */
+function holdDurationMs(
+  slide: SlideTimelineInput,
+  settings: PlaybackSettings,
+): number {
+  const value = slide.holdMs != null ? slide.holdMs : settings.holdMs;
+  return Math.max(0, value);
+}
+
+/**
+ * Duration of a slide's entry segment given its resolved mode:
+ *   - `typewriter` => charCount × per-char timing
+ *   - `none`       => 0 (hard cut, no segment)
+ *   - fade/slide/morph => global transition duration
+ */
+function entryDurationMs(
+  slide: SlideTimelineInput,
+  settings: PlaybackSettings,
+): number {
+  switch (slide.entryMode) {
+    case 'none':
+      return 0;
+    case 'typewriter':
+      return typewriterEntryDurationMs(slide, settings);
+    default:
+      return Math.max(0, settings.transitionMs);
+  }
+}
+
+/**
+ * Build a timeline from per-slide inputs and global settings.
+ *
+ * Segment layout, per slide i (0-based):
+ *   slide 0: [entry(mode0)? as `typing`] -> hold
+ *   slide i>0: [entry(mode_i)? as `transition`, slideIndex i-1] -> hold(i)
+ *
+ * Each slide's ENTRY animation plays first, then the slide holds. Slide 0's entry
+ * types/fades/etc. in from empty and is tagged `typing` (so seek/reveal logic and
+ * the caret keep working); later slides' entries animate the change from the
+ * previous slide and are tagged `transition`, carrying the LEAVING slide index
+ * (i-1) — the invariant the existing morph renderer + export math rely on. A
+ * `none` entry contributes no segment (hard cut). Zero-length entries collapse.
+ *
+ * Overload note: `buildTimeline(number[], settings)` (legacy, global typing intro)
+ * is preserved for existing callers/tests by deriving per-slide inputs internally.
+ */
+export function buildTimeline(
+  slides: readonly SlideTimelineInput[],
+  settings: PlaybackSettings,
+): Timeline;
 export function buildTimeline(
   codeLengths: readonly number[],
   settings: PlaybackSettings,
+): Timeline;
+export function buildTimeline(
+  input: readonly SlideTimelineInput[] | readonly number[],
+  settings: PlaybackSettings,
 ): Timeline {
+  const slides = normalizeSlideInputs(input, settings);
+
   const segments: TimelineSegment[] = [];
   let cursor = 0;
 
@@ -80,30 +194,48 @@ export function buildTimeline(
     slideIndex: number,
     phase: PlaybackPhase,
     durationMs: number,
+    mode: EntryMode,
   ): void => {
     // Skip zero-length segments so phase boundaries stay unambiguous.
     if (durationMs <= 0) return;
-    segments.push({slideIndex, phase, startMs: cursor, durationMs});
+    segments.push({slideIndex, phase, startMs: cursor, durationMs, mode});
     cursor += durationMs;
   };
 
-  const slideCount = codeLengths.length;
-
-  for (let i = 0; i < slideCount; i++) {
-    if (i === 0 && settings.typingIntro) {
-      pushSegment(
-        0,
-        'typing',
-        typingDurationMs(codeLengths[0] ?? 0, settings.typingCharsPerSec),
-      );
+  for (let i = 0; i < slides.length; i++) {
+    const slide = slides[i];
+    const duration = entryDurationMs(slide, settings);
+    // Slide 0 enters from empty (`typing` phase); later slides animate the change
+    // from the previous slide (`transition` phase, carrying the leaving index).
+    if (i === 0) {
+      pushSegment(0, 'typing', duration, slide.entryMode);
+    } else {
+      pushSegment(i - 1, 'transition', duration, slide.entryMode);
     }
-    pushSegment(i, 'hold', Math.max(0, settings.holdMs));
-    if (i < slideCount - 1) {
-      pushSegment(i, 'transition', Math.max(0, settings.transitionMs));
-    }
+    pushSegment(i, 'hold', holdDurationMs(slide, settings), 'none');
   }
 
   return {segments, totalDurationMs: cursor};
+}
+
+/**
+ * Coerce the two accepted input shapes into resolved `SlideTimelineInput`s.
+ * A `number[]` is the legacy code-length form: slide 0's entry is a typewriter
+ * iff `settings.typingIntro`, every other slide morphs (the pre-v3 behaviour).
+ */
+function normalizeSlideInputs(
+  input: readonly SlideTimelineInput[] | readonly number[],
+  settings: PlaybackSettings,
+): readonly SlideTimelineInput[] {
+  if (input.length === 0) return [];
+  if (typeof input[0] === 'number') {
+    const lengths = input as readonly number[];
+    return lengths.map((charCount, i) => ({
+      charCount,
+      entryMode: i === 0 ? (settings.typingIntro ? 'typewriter' : 'none') : 'morph',
+    }));
+  }
+  return input as readonly SlideTimelineInput[];
 }
 
 /**
@@ -116,7 +248,13 @@ export function stateAt(timeline: Timeline, tMs: number): PlaybackFrameState {
 
   // Empty timeline (no slides / all-zero durations): a single static frame.
   if (segments.length === 0) {
-    return {slideIndex: 0, phase: 'hold', progress: 0, totalDurationMs};
+    return {
+      slideIndex: 0,
+      phase: 'hold',
+      progress: 0,
+      mode: 'none',
+      totalDurationMs,
+    };
   }
 
   // Clamp before the start.
@@ -126,6 +264,7 @@ export function stateAt(timeline: Timeline, tMs: number): PlaybackFrameState {
       slideIndex: first.slideIndex,
       phase: first.phase,
       progress: 0,
+      mode: first.mode,
       totalDurationMs,
     };
   }
@@ -137,6 +276,7 @@ export function stateAt(timeline: Timeline, tMs: number): PlaybackFrameState {
       slideIndex: last.slideIndex,
       phase: last.phase,
       progress: 1,
+      mode: last.mode,
       totalDurationMs,
     };
   }
@@ -154,6 +294,7 @@ export function stateAt(timeline: Timeline, tMs: number): PlaybackFrameState {
         slideIndex: segment.slideIndex,
         phase: segment.phase,
         progress,
+        mode: segment.mode,
         totalDurationMs,
       };
     }
@@ -165,6 +306,7 @@ export function stateAt(timeline: Timeline, tMs: number): PlaybackFrameState {
     slideIndex: last.slideIndex,
     phase: last.phase,
     progress: 1,
+    mode: last.mode,
     totalDurationMs,
   };
 }

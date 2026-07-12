@@ -6,7 +6,7 @@ import {
   PLAYBACK_VERSION,
   type PersistedPlaybackSettings,
 } from './model';
-import type {PlaybackSettings} from './timeline';
+import type {EntryMode, PlaybackSettings} from './timeline';
 
 /**
  * Global playback settings + live playback state.
@@ -71,6 +71,8 @@ export function createPlaybackStore() {
         patchSettings({typingCharsPerSec}),
       setHoldMs: (holdMs: number) => patchSettings({holdMs}),
       setTransitionMs: (transitionMs: number) => patchSettings({transitionMs}),
+      setDefaultTransition: (defaultTransition: EntryMode) =>
+        patchSettings({defaultTransition}),
     },
   } as const;
 }

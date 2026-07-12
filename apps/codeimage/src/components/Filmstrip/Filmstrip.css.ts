@@ -106,6 +106,26 @@ export const actionIconBtn = style({
   },
 });
 
+export const slideSettingsPanel = style({
+  display: 'flex',
+  flexDirection: 'column',
+  gap: themeVars.spacing['3'],
+  padding: themeVars.spacing['2'],
+  minWidth: '200px',
+});
+
+export const slideSettingsRow = style({
+  display: 'flex',
+  flexDirection: 'column',
+  gap: themeVars.spacing['1'],
+});
+
+export const slideSettingsLabel = style({
+  fontSize: themeVars.fontSize.xs,
+  color: themeVars.dynamicColors.panel.textColorAlt,
+  userSelect: 'none',
+});
+
 export const reorderButtons = style({
   display: 'flex',
   flexDirection: 'column',

@@ -13,6 +13,7 @@ export const DEFAULT_PLAYBACK_SETTINGS: PlaybackSettings = {
   typingCharsPerSec: 30,
   holdMs: 2500,
   transitionMs: 800,
+  defaultTransition: 'morph',
 };
 
 /** Reasonable UI bounds for the settings controls. */
@@ -20,4 +21,6 @@ export const PLAYBACK_SETTINGS_BOUNDS = {
   typingCharsPerSec: {min: 5, max: 120, step: 5},
   holdMs: {min: 500, max: 8000, step: 250},
   transitionMs: {min: 200, max: 3000, step: 100},
+  /** Per-slide typewriter timing, ms-per-character. */
+  typewriterCharMs: {min: 5, max: 200, step: 5},
 } as const;

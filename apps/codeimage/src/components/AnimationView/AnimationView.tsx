@@ -3,11 +3,11 @@ import {getUiStore} from '@codeimage/store/ui';
 import {activeEditorOf} from '@codeimage/store/playback/playbackController';
 import {getPlaybackStore} from '@codeimage/store/playback/playbackStore';
 import {buildTimelineFromSlides} from '@codeimage/store/playback/playbackController';
-import {stateAt} from '@codeimage/store/playback/timeline';
+import {stateAt, type EntryMode} from '@codeimage/store/playback/timeline';
 import {getSlidesStore} from '@codeimage/store/slides';
 import type {Slide} from '@codeimage/store/slides/model';
 import {syncTokenKeys, type KeyedTokensInfo} from 'shiki-magic-move/core';
-import {createMemo, createResource, For, Show} from 'solid-js';
+import {createMemo, createResource, For, Match, Show, Switch} from 'solid-js';
 import * as styles from './AnimationView.css';
 import {
   ensureHighlighter,
@@ -15,22 +15,39 @@ import {
   shikiThemeFor,
 } from './shikiHighlighter';
 import {
+  fadeLayers,
   fullTokens,
   morphLayers,
   revealTypedTokens,
+  slideLines,
+  type RenderLine,
   type RenderToken,
 } from './tokenReveal';
 
 /**
  * Animated code surface shown during playback in place of CodeMirror. Reads the
- * injected `playback.currentTimeMs` and renders a pure function of it: typing
- * reveal, static hold, or a progress-driven cross-dissolve morph between slides.
+ * injected `playback.currentTimeMs` and renders a pure function of it: a per-slide
+ * entry animation (typewriter / fade / slide / morph / hard cut) followed by a
+ * static hold. The entry mode comes from the timeline segment (`frame.mode`), so
+ * per-slide settings drive both preview and export through the same path.
  *
  * Seeking (phase 3): everything below derives from `stateAt(timeline, tMs)` and
  * the pure token helpers — no wall-clock reads, no DOM measurement, no reliance
  * on CSS-transition timing. Setting `currentTimeMs` to any value reproduces the
  * exact same DOM, which is what deterministic export needs.
  */
+
+/** An empty keyed token set, used as the `from` layer for slide 0's entry. */
+function emptyTokens(reference: KeyedTokensInfo): KeyedTokensInfo {
+  return {
+    ...reference,
+    code: '',
+    hash: 'empty',
+    tokens: [],
+    lineNumbers: false,
+  };
+}
+
 export function AnimationView() {
   const slidesStore = getSlidesStore();
   const playback = getPlaybackStore();
@@ -102,6 +119,13 @@ interface PhaseRendererProps {
   frame: ReturnType<typeof stateAt>;
 }
 
+/**
+ * Dispatch to the right renderer for the active phase + entry mode.
+ *
+ *   hold        => static full render
+ *   typing      => slide-0 entry from empty, per `frame.mode`
+ *   transition  => slide i-1 -> i change, per `frame.mode` (the entering mode)
+ */
 function PhaseRenderer(props: PhaseRendererProps) {
   const currentSet = () => props.sets[props.frame.slideIndex];
   const nextSet = () => props.sets[props.frame.slideIndex + 1];
@@ -109,42 +133,150 @@ function PhaseRenderer(props: PhaseRendererProps) {
   return (
     <Show when={currentSet()} keyed>
       {set => (
-        <Show
-          when={props.frame.phase === 'transition' && nextSet()}
-          fallback={<StaticPhase set={set} frame={props.frame} />}
-        >
-          {next => (
-            <MorphPhase from={set} to={next()} progress={props.frame.progress} />
-          )}
-        </Show>
+        <Switch fallback={<StaticPhase set={set} frame={props.frame} />}>
+          {/* Slide 0's entry from empty. */}
+          <Match when={props.frame.phase === 'typing'}>
+            <EntryRenderer
+              from={emptyTokens(set)}
+              to={set}
+              mode={props.frame.mode}
+              progress={props.frame.progress}
+            />
+          </Match>
+          {/* Change from the leaving slide into the entering (next) slide. */}
+          <Match when={props.frame.phase === 'transition' && nextSet()} keyed>
+            {next => (
+              <EntryRenderer
+                from={set}
+                to={next}
+                mode={props.frame.mode}
+                progress={props.frame.progress}
+              />
+            )}
+          </Match>
+        </Switch>
       )}
     </Show>
   );
 }
 
-/** Typing reveal or a fully-visible hold, both fully in-flow. */
+/** Route an entry animation to its pure renderer based on the resolved mode. */
+function EntryRenderer(props: {
+  from: KeyedTokensInfo;
+  to: KeyedTokensInfo;
+  mode: EntryMode;
+  progress: number;
+}) {
+  return (
+    <Switch fallback={<MorphPhase from={props.from} to={props.to} progress={props.progress} />}>
+      <Match when={props.mode === 'typewriter'}>
+        <TypewriterPhase to={props.to} progress={props.progress} />
+      </Match>
+      <Match when={props.mode === 'fade'}>
+        <FadePhase from={props.from} to={props.to} progress={props.progress} />
+      </Match>
+      <Match when={props.mode === 'slide'}>
+        <SlidePhase from={props.from} to={props.to} progress={props.progress} />
+      </Match>
+    </Switch>
+  );
+}
+
+/** Static full render (steady-state hold). */
 function StaticPhase(props: {
   set: KeyedTokensInfo;
   frame: ReturnType<typeof stateAt>;
 }) {
-  const tokens = createMemo<RenderToken[]>(() =>
-    props.frame.phase === 'typing'
-      ? revealTypedTokens(props.set, props.frame.progress)
-      : fullTokens(props.set),
-  );
-  const showCaret = () => props.frame.phase === 'typing';
-
+  const tokens = createMemo<RenderToken[]>(() => fullTokens(props.set));
   return (
     <pre class={styles.staticLayer}>
       <TokenList tokens={tokens()} />
-      <Show when={showCaret()}>
-        <span class={styles.caret} />
-      </Show>
     </pre>
   );
 }
 
-/** Progress-driven cross-dissolve between two slides' token layouts. */
+/**
+ * Typewriter entry: progressively reveal the target slide's code. On slide 0 this
+ * types in from empty; on later slides it is the v1 "clear then type the new
+ * slide" behaviour (the previous code is not shown during the type-in).
+ */
+function TypewriterPhase(props: {to: KeyedTokensInfo; progress: number}) {
+  const tokens = createMemo<RenderToken[]>(() =>
+    revealTypedTokens(props.to, props.progress),
+  );
+  return (
+    <pre class={styles.staticLayer}>
+      <TokenList tokens={tokens()} />
+      <span class={styles.caret} />
+    </pre>
+  );
+}
+
+/** Whole-block crossfade (no token movement). */
+function FadePhase(props: {
+  from: KeyedTokensInfo;
+  to: KeyedTokensInfo;
+  progress: number;
+}) {
+  const layers = createMemo(() =>
+    fadeLayers(props.from, props.to, props.progress),
+  );
+  return (
+    <>
+      <pre class={styles.layer} style={{opacity: String(layers().leaving.opacity)}}>
+        <TokenList tokens={layers().leaving.tokens} />
+      </pre>
+      <pre class={styles.layer} style={{opacity: String(layers().entering.opacity)}}>
+        <TokenList tokens={layers().entering.tokens} />
+      </pre>
+      {/* In-flow spacer sizes the surface to the taller of the two layouts. */}
+      <pre class={styles.staticLayer} style={{visibility: 'hidden'}}>
+        <TokenList tokens={fullTokens(props.to)} />
+      </pre>
+    </>
+  );
+}
+
+/** Line-level slide: removed lines slide out left, added lines slide in right. */
+function SlidePhase(props: {
+  from: KeyedTokensInfo;
+  to: KeyedTokensInfo;
+  progress: number;
+}) {
+  const layers = createMemo(() =>
+    slideLines(props.from, props.to, props.progress),
+  );
+  return (
+    <>
+      <div class={styles.slideLineLayer}>
+        <For each={layers().leaving}>{line => <SlideLineRow line={line} />}</For>
+      </div>
+      <div class={styles.slideLineLayer}>
+        <For each={layers().entering}>{line => <SlideLineRow line={line} />}</For>
+      </div>
+      {/* In-flow spacer sizes the surface to the final layout. */}
+      <pre class={styles.staticLayer} style={{visibility: 'hidden'}}>
+        <TokenList tokens={fullTokens(props.to)} />
+      </pre>
+    </>
+  );
+}
+
+function SlideLineRow(props: {line: RenderLine}) {
+  return (
+    <span
+      class={styles.slideLine}
+      style={{
+        transform: `translateX(${(props.line.translateX * 100).toFixed(3)}%)`,
+        opacity: props.line.opacity === 1 ? undefined : String(props.line.opacity),
+      }}
+    >
+      <TokenList tokens={props.line.tokens} inline />
+    </span>
+  );
+}
+
+/** Progress-driven cross-dissolve morph between two slides' token layouts. */
 function MorphPhase(props: {
   from: KeyedTokensInfo;
   to: KeyedTokensInfo;
@@ -185,11 +317,11 @@ function MorphPhase(props: {
   );
 }
 
-function TokenList(props: {tokens: RenderToken[]}) {
+function TokenList(props: {tokens: RenderToken[]; inline?: boolean}) {
   return (
     <For each={props.tokens}>
       {token => (
-        <Show when={!token.isNewline} fallback={<br />}>
+        <Show when={!token.isNewline} fallback={props.inline ? null : <br />}>
           <span
             class={styles.token}
             style={{

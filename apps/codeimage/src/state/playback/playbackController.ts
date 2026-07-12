@@ -1,6 +1,7 @@
 import {getSlidesStore} from '@codeimage/store/slides';
 import type {Slide} from '@codeimage/store/slides/model';
 import {getPlaybackStore} from './playbackStore';
+import {resolveSlideInputs} from './slideAnimation';
 import {buildTimeline, slideCodeLength, stateAt, type Timeline} from './timeline';
 
 /**
@@ -36,10 +37,11 @@ export function activeEditorOf(slide: Slide): {
 export function buildTimelineFromSlides(): Timeline {
   const slidesStore = getSlidesStore();
   const playback = getPlaybackStore();
-  const lengths = slidesStore.state.slides.map(s =>
-    slideCodeLength(activeEditorOf(s).code),
-  );
-  return buildTimeline(lengths, playback.settings);
+  const slides = slidesStore.state.slides;
+  const lengths = slides.map(s => slideCodeLength(activeEditorOf(s).code));
+  // Collapse per-slide inherit chains against the global defaults, then build.
+  const inputs = resolveSlideInputs(slides, lengths, playback.settings);
+  return buildTimeline(inputs, playback.settings);
 }
 
 interface StartOptions {

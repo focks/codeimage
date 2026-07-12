@@ -1,5 +1,6 @@
 import type {KeyedToken, KeyedTokensInfo} from 'shiki-magic-move/core';
 import {typedCharCount} from '../../state/playback/timeline';
+import {diffLines} from './lineDiff';
 
 /**
  * Pure token-layout helpers for the animation view. Everything here is a pure
@@ -123,6 +124,115 @@ export function morphLayers(
       translateYLines: 0.15 * (1 - p),
     },
   };
+}
+
+/**
+ * Crossfade layout: the whole `from` block fades out while the whole `to` block
+ * fades in. No token movement — a plain opacity cross-dissolve. Pure in `progress`
+ * so it is fully seekable. Slide 0 (empty `from`) reads as a clean fade-in.
+ */
+export function fadeLayers(
+  from: KeyedTokensInfo,
+  to: KeyedTokensInfo,
+  progress: number,
+): {leaving: MorphLayer; entering: MorphLayer} {
+  const p = clamp01(progress);
+  return {
+    leaving: {
+      tokens: fullTokens(from),
+      opacity: 1 - p,
+      translateYLines: 0,
+    },
+    entering: {
+      tokens: fullTokens(to),
+      opacity: p,
+      translateYLines: 0,
+    },
+  };
+}
+
+/** A single rendered line of tokens plus its animation offset/opacity. */
+export interface RenderLine {
+  readonly key: string;
+  readonly tokens: RenderToken[];
+  /** Horizontal offset as a fraction of the surface width (-1..1). */
+  readonly translateX: number;
+  readonly opacity: number;
+}
+
+/** A line-based slide layout: leaving lines slide out left, entering slide in right. */
+export interface SlideLineLayers {
+  readonly leaving: RenderLine[];
+  readonly entering: RenderLine[];
+}
+
+/**
+ * Group a keyed token set into lines (arrays of tokens), splitting on newline
+ * tokens. The newline tokens themselves are dropped — line breaks are structural
+ * here (each line renders in its own block), not inline `<br>`s.
+ */
+export function tokensToLines(info: KeyedTokensInfo): RenderToken[][] {
+  const lines: RenderToken[][] = [[]];
+  for (const token of info.tokens) {
+    if (token.content === '\n') {
+      lines.push([]);
+      continue;
+    }
+    lines[lines.length - 1].push(toRenderToken(token, 1));
+  }
+  return lines;
+}
+
+/**
+ * Line-level slide transition (snappify's SlideIn). Diffs `from`/`to` by whole
+ * lines: unchanged lines hold in place; removed lines slide out to the left and
+ * fade; added/changed lines slide in from the right and fade in. Purely a
+ * function of `progress`, so seeking reproduces the exact layout — the export
+ * invariant. Slide 0 (empty `from`) yields an all-entering slide-in.
+ */
+export function slideLines(
+  from: KeyedTokensInfo,
+  to: KeyedTokensInfo,
+  progress: number,
+): SlideLineLayers {
+  const p = clamp01(progress);
+  const fromLines = tokensToLines(from);
+  const toLines = tokensToLines(to);
+  const diff = diffLines(from.code, to.code);
+
+  const leaving: RenderLine[] = [];
+  const entering: RenderLine[] = [];
+
+  diff.forEach((entry, i) => {
+    if (entry.kind === 'common') {
+      // Unchanged line: render once in the entering layer, fully settled.
+      const tokens = toLines[entry.nextIndex] ?? [];
+      entering.push({
+        key: `c-${entry.prevIndex}-${entry.nextIndex}-${i}`,
+        tokens,
+        translateX: 0,
+        opacity: 1,
+      });
+    } else if (entry.kind === 'removed') {
+      const tokens = fromLines[entry.prevIndex] ?? [];
+      leaving.push({
+        key: `r-${entry.prevIndex}-${i}`,
+        tokens,
+        translateX: -0.35 * p,
+        opacity: 1 - p,
+      });
+    } else {
+      const tokens = toLines[entry.nextIndex] ?? [];
+      entering.push({
+        key: `a-${entry.nextIndex}-${i}`,
+        tokens,
+        translateX: 0.35 * (1 - p),
+        opacity: p,
+      });
+    }
+  });
+
+  return {leaving, entering};
 }
 
 function clamp01(value: number): number {

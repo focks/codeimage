@@ -22,6 +22,13 @@ export const ExportCanvasStore = defineStore(() => ({
   jpegQuality: 100,
   extension: ExportExtension.png,
   showOnlyActiveTab: false,
+  /**
+   * The live, on-canvas frame subtree (the `ManagedFrame`/`Frame` wrapper). Unlike
+   * the Portal-mounted `PreviewFrame`, this node hosts the animated `AnimationView`
+   * during playback, so video export must snapshot it to capture typing/morph. Not
+   * persisted — it's a transient DOM reference set on mount.
+   */
+  liveFrameRef: undefined as HTMLElement | undefined,
 }))
   .extend(
     withIndexedDbPlugin<PersistedExportCanvasSettings>('exportSettings', {
@@ -63,6 +70,9 @@ export const ExportCanvasStore = defineStore(() => ({
     },
     setShowOnlyActiveTab(value: boolean) {
       store.set('showOnlyActiveTab', value);
+    },
+    setLiveFrameRef(el: HTMLElement | undefined) {
+      store.set('liveFrameRef', el);
     },
     initCanvas(el: Accessor<HTMLElement | undefined>) {
       createResizeObserver(el, ref => {

@@ -103,7 +103,23 @@ export async function exportVideo(
     await prewarmHighlighter(slidesStore.state.slides);
 
     const timeline = buildTimelineFromSlides();
+
+    // Measure the LIVE frame only after the CanvasEditor -> AnimationView swap has
+    // settled: flipping isPlaying detaches the editor for a tick, so an immediate
+    // measure catches a collapsed (near-zero) box and yields a 2x2 video. Seek to
+    // the final held frame (the tallest layout — last slide, fully revealed) and
+    // flush before measuring, so the locked capture size fits every frame without
+    // clipping. The size is fixed here and reused for all frames (H.264 needs it).
+    playback.setCurrentTimeMs(timeline.totalDurationMs);
+    applySlideChromeAtTime(timeline.totalDurationMs, timeline);
+    await nextFrame();
+    await nextFrame();
     const {width, height} = measure(options.node, options.pixelRatio);
+    if (width <= 2 || height <= 2) {
+      throw new Error('Could not measure the export frame (empty layout).');
+    }
+    playback.setCurrentTimeMs(0);
+
     const total = frameCount(timeline.totalDurationMs, EXPORT_FPS);
     const reuseMap = holdReuseMap(timeline, EXPORT_FPS, stateAt);
     const duration = frameDurationMicros(EXPORT_FPS);

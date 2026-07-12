@@ -1,6 +1,7 @@
 import type {AssetId} from '@codeimage/store/assets/assets';
 import {getAssetsStore, isAssetUrl} from '@codeimage/store/assets/assets';
 import {AssetsImage} from '@codeimage/store/assets/AssetsImage';
+import {getExportCanvasStore} from '@codeimage/store/canvas';
 import {getRootEditorStore} from '@codeimage/store/editor';
 import {dispatchUpdateTheme} from '@codeimage/store/effects/onThemeChange';
 import {Box, FadeInOutTransition} from '@codeimage/ui';
@@ -10,7 +11,7 @@ import {createHorizontalResize} from '@core/hooks/resizable';
 import {createResizeObserver} from '@solid-primitives/resize-observer';
 import {assignInlineVars} from '@vanilla-extract/dynamic';
 import type {ParentComponent} from 'solid-js';
-import {onMount, Show} from 'solid-js';
+import {onCleanup, onMount, Show} from 'solid-js';
 import * as styles from './Frame.css';
 
 export const exportExclude = _exportExclude;
@@ -40,6 +41,12 @@ export const Frame: ParentComponent<FrameProps> = props => {
     });
 
   const assetsStore = getAssetsStore();
+  const exportCanvasStore = getExportCanvasStore();
+
+  // The live, on-canvas frame wrapper — the subtree that hosts AnimationView
+  // during playback. Registered so video export can snapshot it (image export
+  // keeps using the Portal-mounted PreviewFrame).
+  let wrapperRef!: HTMLDivElement;
 
   const computedWidth = () => {
     const size = width();
@@ -65,6 +72,9 @@ export const Frame: ParentComponent<FrameProps> = props => {
   });
 
   onMount(() => {
+    exportCanvasStore.setLiveFrameRef(wrapperRef);
+    onCleanup(() => exportCanvasStore.setLiveFrameRef(undefined));
+
     const refValue = ref();
     if (!refValue) return;
 
@@ -88,6 +98,7 @@ export const Frame: ParentComponent<FrameProps> = props => {
 
   return (
     <div
+      ref={wrapperRef}
       style={assignInlineVars({
         [styles.frameVars.radius]: borderRadius(),
         [styles.frameVars.aspectRatio]: 'unset',

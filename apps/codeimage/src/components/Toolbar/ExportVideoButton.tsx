@@ -1,3 +1,4 @@
+import {getExportCanvasStore} from '@codeimage/store/canvas';
 import {buildTimelineFromSlides} from '@codeimage/store/playback/playbackController';
 import {getPlaybackStore} from '@codeimage/store/playback/playbackStore';
 import {getSlidesStore} from '@codeimage/store/slides';
@@ -72,6 +73,7 @@ interface ExportVideoDialogProps {
 }
 
 function ExportVideoDialog(props: ExportVideoDialogProps) {
+  const exportCanvasStore = getExportCanvasStore();
   const [pixelRatio, setPixelRatio] = createSignal<number>(1);
   const [exporting, setExporting] = createSignal(false);
   const [progress, setProgress] = createSignal({done: 0, total: 0});
@@ -104,7 +106,10 @@ function ExportVideoDialog(props: ExportVideoDialogProps) {
   };
 
   const startExport = async () => {
-    const node = props.canvasRef?.firstChild as HTMLElement | undefined;
+    // Video export must snapshot the LIVE on-canvas frame — the subtree that
+    // swaps in AnimationView (typing/morph) during playback — not the static
+    // Portal-mounted PreviewFrame used for image export.
+    const node = exportCanvasStore.get.liveFrameRef;
     if (!node) {
       toast.error('Nothing to export.', {position: 'bottom-center'});
       return;

@@ -11,7 +11,7 @@ import {
 function makeSlide(id: string): Slide {
   return {
     id,
-    frame: {background: '#fff', padding: 64, radius: 8, visible: true, opacity: 100},
+    frame: {background: '#fff', padding: 64, radius: 8, visible: true, opacity: 100, minWidth: 0, minHeight: 0},
     terminal: {
       showHeader: true, type: 'macOS', accentVisible: true, shadow: null,
       background: '#000', textColor: '#fff', showWatermark: false,

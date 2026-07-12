@@ -22,5 +22,8 @@ export interface PersistedSlidesState {
   activeSlideIndex: number;
 }
 
+// Keep the IDB key stable so existing decks still load; the frame store coerces
+// missing min-width/min-height to 0 (off) when hydrating pre-v2 slide data.
 export const SLIDES_IDB_KEY = 'slides$v1';
-export const SLIDES_VERSION = '1';
+// v2 adds per-slide frame minWidth/minHeight to PersistedFrameState.
+export const SLIDES_VERSION = '2';

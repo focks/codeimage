@@ -26,6 +26,8 @@ export function ManagedFrame() {
       background={frame.background}
       opacity={frame.opacity}
       visible={frame.visible}
+      minWidth={frame.minWidth}
+      minHeight={frame.minHeight}
       aspectRatio={frame.aspectRatio}
       onWidthChange={getFrameState().setWidth}
       onHeightChange={getFrameState().setHeight}

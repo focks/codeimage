@@ -90,6 +90,10 @@ export const container = style([
     width: frameVars.width,
     height: frameVars.height,
     maxWidth: frameVars.maxWidth,
+    // Content-driven floors. `max-content` is an intrinsic keyword and is invalid
+    // inside CSS `max()`, so the user-set minimum can't be combined here; it is a
+    // plain length applied on `width`/`height` (see Frame.tsx `computedWidth`),
+    // which widens the box to at least the floor while content still grows past it.
     minWidth: frameVars.minWidth,
     minHeight: frameVars.minHeight,
     position: 'relative',

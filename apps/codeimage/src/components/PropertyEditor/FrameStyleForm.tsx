@@ -1,5 +1,10 @@
 import {useI18n} from '@codeimage/locale';
 import {getFrameState} from '@codeimage/store/editor/frame';
+import {
+  MAX_FRAME_MIN_HEIGHT,
+  MAX_FRAME_MIN_WIDTH,
+  MIN_FRAME_SIZE,
+} from '@codeimage/store/frame/model';
 import {RangeField} from '@codeimage/ui';
 import {getUmami} from '@core/constants/umami';
 import {SegmentedField} from '@ui/SegmentedField/SegmentedField';
@@ -13,7 +18,7 @@ import {CustomColorPicker} from './controls/ColorPicker/CustomColorPicker';
 import {PanelHeader} from './PanelHeader';
 import {PanelRow, TwoColumnPanelRow} from './PanelRow';
 import {SuspenseEditorItem} from './SuspenseEditorItem';
-import {Select, createSelectOptions} from '@codeui/kit';
+import {NumberField, Select, createSelectOptions} from '@codeui/kit';
 
 export const FrameStyleForm: ParentComponent = () => {
   const [t] = useI18n<AppLocaleEntries>();
@@ -30,6 +35,12 @@ export const FrameStyleForm: ParentComponent = () => {
       valueKey: 'value',
     },
   );
+
+  // NumberField emits number | null | undefined; drop nullish before dispatch.
+  // The store clamps the value; 0 disables the minimum-size floor.
+  const onNumber = (fn: (value: number) => void) => (value?: number | null) => {
+    if (typeof value === 'number' && !Number.isNaN(value)) fn(value);
+  };
 
   return (
     <>
@@ -151,6 +162,42 @@ export const FrameStyleForm: ParentComponent = () => {
                 frame.setAspectRatio(ratio);
                 getUmami().track('aspect-ratio', {ratio: ratio ?? 'unset'});
               }}
+            />
+          </SuspenseEditorItem>
+        </TwoColumnPanelRow>
+      </PanelRow>
+
+      <PanelRow for={'minWidthField'} label={'Min width (px)'}>
+        <TwoColumnPanelRow>
+          <SuspenseEditorItem
+            fallback={<SkeletonLine width={'100%'} height={'26px'} />}
+          >
+            <NumberField
+              size={'xs'}
+              id={'minWidthField'}
+              min={MIN_FRAME_SIZE}
+              max={MAX_FRAME_MIN_WIDTH}
+              step={10}
+              value={frame.store.minWidth}
+              onChange={onNumber(frame.setMinWidth)}
+            />
+          </SuspenseEditorItem>
+        </TwoColumnPanelRow>
+      </PanelRow>
+
+      <PanelRow for={'minHeightField'} label={'Min height (px)'}>
+        <TwoColumnPanelRow>
+          <SuspenseEditorItem
+            fallback={<SkeletonLine width={'100%'} height={'26px'} />}
+          >
+            <NumberField
+              size={'xs'}
+              id={'minHeightField'}
+              min={MIN_FRAME_SIZE}
+              max={MAX_FRAME_MIN_HEIGHT}
+              step={10}
+              value={frame.store.minHeight}
+              onChange={onNumber(frame.setMinHeight)}
             />
           </SuspenseEditorItem>
         </TwoColumnPanelRow>

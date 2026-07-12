@@ -24,6 +24,10 @@ interface FrameProps {
   visible: boolean;
   readOnly: boolean;
   aspectRatio: string | null | undefined;
+  /** User-set minimum window width in px. 0 disables the floor. */
+  minWidth?: number;
+  /** User-set minimum window height in px. 0 disables the floor. */
+  minHeight?: number;
   onWidthChange: (width: number) => void;
   onHeightChange: (height: number) => void;
 }
@@ -48,14 +52,25 @@ export const Frame: ParentComponent<FrameProps> = props => {
   // keeps using the Portal-mounted PreviewFrame).
   let wrapperRef!: HTMLDivElement;
 
+  // Enforce the user-set minimum on the resolved size. The container's
+  // `min-width: max-content` / `min-height: 100%` stay intact (content is never
+  // clipped and still grows past the floor), while a length floor is applied
+  // here on `width`/`height`. `max(<length>, <length>)` is valid CSS; the
+  // intrinsic `auto`/`100%` case falls back to the floor as a plain length.
   const computedWidth = () => {
     const size = width();
-    return size ? `${size}px` : 'auto';
+    const floor = props.minWidth ?? 0;
+    if (size && floor > 0) return `max(${size}px, ${floor}px)`;
+    if (size) return `${size}px`;
+    return floor > 0 ? `${floor}px` : 'auto';
   };
 
   const computedHeight = () => {
     const size = height();
-    return size ? `${size}px` : '100%';
+    const floor = props.minHeight ?? 0;
+    if (size && floor > 0) return `max(${size}px, ${floor}px)`;
+    if (size) return `${size}px`;
+    return floor > 0 ? `max(100%, ${floor}px)` : '100%';
   };
 
   const roundedWidth = () => `${Math.floor(width())}px`;

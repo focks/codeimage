@@ -1,6 +1,9 @@
-import type {
-  FrameState,
-  PersistedFrameState,
+import {
+  clampFrameMinSize,
+  MAX_FRAME_MIN_HEIGHT,
+  MAX_FRAME_MIN_WIDTH,
+  type FrameState,
+  type PersistedFrameState,
 } from '@codeimage/store/frame/model';
 import {provideAppState} from '@codeimage/store/index';
 import type {PresetData} from '@codeimage/store/presets/types';
@@ -22,6 +25,8 @@ export function getInitialFrameState(): FrameState {
     width: 0,
     height: 0,
     aspectRatio: null,
+    minWidth: 0,
+    minHeight: 0,
   };
 }
 
@@ -32,6 +37,8 @@ type Commands = {
   setRadius: number;
   setScale: number;
   setAutoWidth: boolean;
+  setMinWidth: number;
+  setMinHeight: number;
   setWidth: number;
   setHeight: number;
   setVisibility: boolean;
@@ -70,6 +77,14 @@ const frameState = defineStore(() => getInitialFrameState())
         ...state,
         autoWidth,
       }))
+      .hold(store.commands.setMinWidth, (minWidth, {state}) => ({
+        ...state,
+        minWidth: clampFrameMinSize(minWidth, MAX_FRAME_MIN_WIDTH),
+      }))
+      .hold(store.commands.setMinHeight, (minHeight, {state}) => ({
+        ...state,
+        minHeight: clampFrameMinSize(minHeight, MAX_FRAME_MIN_HEIGHT),
+      }))
       .hold(store.commands.setVisibility, (visible, {state}) => ({
         ...state,
         visible,
@@ -99,7 +114,14 @@ const frameState = defineStore(() => getInitialFrameState())
         store.set(state => ({...state, ...presetData}));
       })
       .hold(store.commands.setFromPersistedState, (_, {state}) => {
-        return {...state, ..._};
+        // Old persisted slides predate min-size; coerce missing fields to 0 (off)
+        // so hydrating pre-v2 data never yields undefined min-width/height.
+        return {
+          ...state,
+          ..._,
+          minWidth: _.minWidth ?? 0,
+          minHeight: _.minHeight ?? 0,
+        };
       })
       .hold(store.commands.setAspectRatio, (aspectRatio, {state}) => {
         return {...state, aspectRatio};
@@ -115,6 +137,8 @@ const frameState = defineStore(() => getInitialFrameState())
         padding: state.padding,
         visible: state.visible,
         radius: state.radius,
+        minWidth: state.minWidth ?? 0,
+        minHeight: state.minHeight ?? 0,
       } as PersistedFrameState;
     };
 
@@ -126,6 +150,8 @@ const frameState = defineStore(() => getInitialFrameState())
         store.commands.setRadius,
         store.commands.setScale,
         store.commands.setAutoWidth,
+        store.commands.setMinWidth,
+        store.commands.setMinHeight,
         store.commands.setVisibility,
         store.commands.setNextPadding,
         store.commands.setFromPreset,

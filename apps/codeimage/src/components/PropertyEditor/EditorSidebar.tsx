@@ -2,6 +2,7 @@ import {DynamicSizedContainer} from '@ui/DynamicSizedContainer/DynamicSizedConta
 import {EditorStyleForm} from './EditorStyleForm';
 import {FrameStyleForm} from './FrameStyleForm';
 import {PanelDivider} from './PanelDivider';
+import {PlaybackSettingsForm} from './PlaybackSettingsForm';
 import {WindowStyleForm} from './WindowStyleForm';
 
 export const EditorSidebar = () => {
@@ -20,6 +21,11 @@ export const EditorSidebar = () => {
       <div>
         <EditorStyleForm />
       </div>
+      <PanelDivider />
+
+      <DynamicSizedContainer>
+        <PlaybackSettingsForm />
+      </DynamicSizedContainer>
     </>
   );
 };

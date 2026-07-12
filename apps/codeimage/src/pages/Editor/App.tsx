@@ -3,6 +3,7 @@ import {getActiveEditorStore} from '@codeimage/store/editor/activeEditor';
 import {getEditorSyncAdapter} from '@codeimage/store/editor/createEditorSync';
 import {getFrameState} from '@codeimage/store/editor/frame';
 import {dispatchRandomTheme} from '@codeimage/store/effects/onThemeChange';
+import {getPlaybackStore} from '@codeimage/store/playback/playbackStore';
 import {getSlidesStore} from '@codeimage/store/slides';
 import {adaptiveFullScreenHeight, Box, HStack, PortalHost} from '@codeimage/ui';
 import {Button} from '@codeui/kit';
@@ -44,8 +45,9 @@ export function App() {
   const frameStore = getFrameState();
   const exportCanvasStore = getExportCanvasStore();
   const {readOnly, clone} = getEditorSyncAdapter()!;
-  // Initialize slides store — must happen inside a reactive context (component body)
+  // Initialize slides + playback stores — must happen inside a reactive context
   getSlidesStore();
+  getPlaybackStore();
   onMount(() => exportCanvasStore.initCanvas(frameRef));
 
   return (

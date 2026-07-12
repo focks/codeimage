@@ -14,6 +14,7 @@ import {CollectionIcon} from '../Icons/Collection';
 import {sidebarLogo} from '../Scaffold/Sidebar/Sidebar.css';
 import {UserBadge} from '../UserBadge/UserBadge';
 import {ExportButton} from './ExportButton';
+import {PlayButton} from './PlayButton';
 import {ShareButton} from './ShareButton';
 import * as styles from './Toolbar.css';
 import {ToolbarSettingsButton} from './ToolbarSettings';
@@ -78,6 +79,8 @@ export function Toolbar(props: VoidProps<ToolbarProps>) {
         <Box class={styles.actionBox} flexGrow={1}>
           <HStack marginLeft={'auto'} spacing={'2'}>
             <Show when={modality === 'full'} keyed={false}>
+              <PlayButton />
+
               <ShareButton showLabel={false} />
 
               <ExportButton canvasRef={props.canvasRef} />

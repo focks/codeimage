@@ -1,0 +1,83 @@
+import {createEffect, createSignal, on, onMount, untrack} from 'solid-js';
+import {useIdb} from '../../hooks/use-indexed-db';
+import {
+  DEFAULT_PLAYBACK_SETTINGS,
+  PLAYBACK_IDB_KEY,
+  PLAYBACK_VERSION,
+  type PersistedPlaybackSettings,
+} from './model';
+import type {PlaybackSettings} from './timeline';
+
+/**
+ * Global playback settings + live playback state.
+ *
+ * Follows the slides-store module-singleton pattern (signals + manual IDB), not
+ * statebuilder. `currentTimeMs` is set by the rAF preview loop and — in phase 3 —
+ * by the fixed-step export driver; it is never read from a wall clock here.
+ */
+export function createPlaybackStore() {
+  const idb = useIdb();
+
+  const [settings, setSettings] = createSignal<PlaybackSettings>(
+    DEFAULT_PLAYBACK_SETTINGS,
+  );
+  const [isPlaying, setIsPlaying] = createSignal(false);
+  const [currentTimeMs, setCurrentTimeMs] = createSignal(0);
+
+  function patchSettings(patch: Partial<PlaybackSettings>): void {
+    setSettings(s => ({...s, ...patch}));
+  }
+
+  function persistToIdb(): void {
+    const persisted: PersistedPlaybackSettings = {
+      $version: PLAYBACK_VERSION,
+      settings: untrack(settings),
+    };
+    idb.set(PLAYBACK_IDB_KEY, persisted).catch(() => {
+      /* best-effort persistence; ignore quota/serialization failures */
+    });
+  }
+
+  onMount(async () => {
+    try {
+      const loaded = await idb.get<PersistedPlaybackSettings>(PLAYBACK_IDB_KEY);
+      if (loaded?.settings) {
+        // Merge over defaults so a bumped schema keeps missing keys sane.
+        setSettings({...DEFAULT_PLAYBACK_SETTINGS, ...loaded.settings});
+      }
+    } catch {
+      /* fall back to defaults */
+    }
+
+    // Persist settings changes only (playback state is transient).
+    createEffect(on(settings, persistToIdb, {defer: true}));
+  });
+
+  return {
+    get settings() {
+      return settings();
+    },
+    get isPlaying() {
+      return isPlaying();
+    },
+    get currentTimeMs() {
+      return currentTimeMs();
+    },
+    setIsPlaying,
+    setCurrentTimeMs,
+    actions: {
+      setTypingIntro: (typingIntro: boolean) => patchSettings({typingIntro}),
+      setTypingCharsPerSec: (typingCharsPerSec: number) =>
+        patchSettings({typingCharsPerSec}),
+      setHoldMs: (holdMs: number) => patchSettings({holdMs}),
+      setTransitionMs: (transitionMs: number) => patchSettings({transitionMs}),
+    },
+  } as const;
+}
+
+let _store: ReturnType<typeof createPlaybackStore> | undefined;
+
+export function getPlaybackStore(): ReturnType<typeof createPlaybackStore> {
+  if (!_store) _store = createPlaybackStore();
+  return _store;
+}

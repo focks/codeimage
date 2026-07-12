@@ -3,7 +3,9 @@ import {getActiveEditorStore} from '@codeimage/store/editor/activeEditor';
 import {getEditorSyncAdapter} from '@codeimage/store/editor/createEditorSync';
 import {getFrameState} from '@codeimage/store/editor/frame';
 import {getTerminalState} from '@codeimage/store/editor/terminal';
+import {getPlaybackStore} from '@codeimage/store/playback/playbackStore';
 import {lazy, Show} from 'solid-js';
+import {AnimationView} from '../AnimationView/AnimationView';
 import {DynamicTerminal} from '../Terminal/DynamicTerminal/DynamicTerminal';
 import {Frame} from './Frame';
 
@@ -13,6 +15,7 @@ export function ManagedFrame() {
   const frame = getFrameState().store;
   const terminal = getTerminalState().state;
   const editor = getRootEditorStore();
+  const playback = getPlaybackStore();
   const {readOnly} = getEditorSyncAdapter()!;
 
   return (
@@ -43,8 +46,13 @@ export function ManagedFrame() {
         borderType={terminal.borderType}
         themeId={editor.state.options.themeId}
       >
-        <Show when={getActiveEditorStore().editor()}>
-          <CanvasEditor readOnly={readOnly()} />
+        <Show
+          when={!playback.isPlaying}
+          fallback={<AnimationView />}
+        >
+          <Show when={getActiveEditorStore().editor()}>
+            <CanvasEditor readOnly={readOnly()} />
+          </Show>
         </Show>
       </DynamicTerminal>
     </Frame>

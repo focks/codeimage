@@ -59,6 +59,11 @@ export function createSlidesStore() {
     activeSlideIndex: 0,
   });
 
+  // During playback the animation view reads slides[i] directly and applies
+  // chrome styles to the live stores without persisting. This flag suppresses
+  // the flush/persist subscriptions so playback never mutates saved slide data.
+  const [playbackMode, setPlaybackMode] = createSignal(false);
+
   const activeSlide = () => state().slides[state().activeSlideIndex] ?? null;
 
   // ── Snapshot the active slide with the current live-store data ──────────
@@ -176,6 +181,7 @@ export function createSlidesStore() {
 
     // Subscribe to live-store changes: keep slides[activeIndex] in sync + persist
     const sub = onChange$.pipe(debounceTime(300)).subscribe(() => {
+      if (playbackMode()) return; // suppressed during playback
       flushCurrentSlideSnapshot();
       persistToIdb();
     });
@@ -185,6 +191,7 @@ export function createSlidesStore() {
   // Persist whenever slides state itself changes (add/remove/reorder)
   createEffect(
     on(state, () => {
+      if (playbackMode()) return; // suppressed during playback
       if (state().slides.length > 0) {
         persistToIdb();
       }
@@ -195,7 +202,17 @@ export function createSlidesStore() {
     get state() {
       return state();
     },
+    get playbackMode() {
+      return playbackMode();
+    },
     activeSlide,
+    /** Snapshot live stores into the active slide (data-loss guard before play). */
+    flushCurrentSlideSnapshot,
+    /** Push a slide's chrome/editor into live stores without flushing back. */
+    loadSlideIntoStores(slide: Slide): void {
+      loadSlideIntoStores(slide, frameStore, terminalStore, editorStore);
+    },
+    setPlaybackMode,
     actions: {
       addSlide,
       duplicateSlide,

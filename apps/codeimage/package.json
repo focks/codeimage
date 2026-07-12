@@ -20,7 +20,6 @@
   },
   "devDependencies": {
     "@mdx-js/mdx": "catalog:next",
-    "vitest": "catalog:next",
     "@mdx-js/rollup": "catalog:next",
     "@mswjs/data": "^0.16.2",
     "@types/downloadjs": "^1.4.6",
@@ -41,6 +40,7 @@
     "vite": "catalog:next",
     "vite-plugin-solid": "catalog:next",
     "vite-tsconfig-paths": "catalog:next",
+    "vitest": "catalog:next",
     "workbox-core": "^7.4.0",
     "workbox-window": "^7.4.0"
   },
@@ -104,6 +104,8 @@
     "motion": "^10.15.5",
     "polished": "^4.2.2",
     "rxjs": "^7.8.2",
+    "shiki": "4.3.1",
+    "shiki-magic-move": "1.4.0",
     "solid-codemirror": "catalog:next",
     "solid-headless": "^0.13.1",
     "solid-js": "catalog:next",

@@ -4,8 +4,13 @@ import {getSlidesStore} from '@codeimage/store/slides';
 import type {Slide} from '@codeimage/store/slides/model';
 import {resolveChromeAtTime} from './chromeInterpolation';
 import {getPlaybackStore} from './playbackStore';
+import {boundaryPreviewWindow} from './previewMath';
 import {resolveSlideInputs} from './slideAnimation';
 import {buildTimeline, slideCodeLength, stateAt, type Timeline} from './timeline';
+
+// Re-export the pure preview/present math so callers can import it from the
+// controller (its historical home) while the logic lives in `previewMath.ts`.
+export {boundaryPreviewWindow, slideEntryStartMs} from './previewMath';
 
 /**
  * Orchestrates play/stop. Time is injected: the rAF loop feeds real time; phase 3
@@ -52,7 +57,14 @@ interface StartOptions {
   onFrame?: (currentTimeMs: number) => void;
   /** Called once when playback stops or finishes (after state restore). */
   onStop?: () => void;
+  /**
+   * Injected start time (ms) for the rAF loop. Defaults to 0 (play the whole
+   * deck — the export/"play all" behaviour). The Play button passes the active
+   * slide's entry start so it presents from the current slide, Canva-style.
+   */
+  startAtMs?: number;
 }
+
 
 let rafId: number | null = null;
 let restoreSlide: Slide | null = null;
@@ -102,7 +114,12 @@ export function applySlideChromeAtTime(tMs: number, timeline: Timeline): void {
   if (slide) slidesStore.loadSlideIntoStores(slide);
 }
 
-/** Begin fullcanvas playback from slide 1. Idempotent while already playing. */
+/**
+ * Begin fullcanvas playback. By default plays the whole deck from t=0 (the export
+ * / "play all" behaviour). Pass `startAtMs` to present from a later point — the
+ * Play button uses {@link slideEntryStartMs} for the active slide so it presents
+ * from the current slide, Canva-style. Idempotent while already playing.
+ */
 export function startPlayback(options: StartOptions = {}): void {
   if (rafId !== null) return;
 
@@ -118,13 +135,19 @@ export function startPlayback(options: StartOptions = {}): void {
   restoreSlide = slidesStore.state.slides[slidesStore.state.activeSlideIndex] ?? null;
   activeOnStop = options.onStop;
 
+  const timeline = buildTimelineFromSlides();
+  // Clamp the start into the timeline; a start at/after the end has nothing to
+  // play, so fall back to 0 (present the whole deck) rather than a no-op.
+  const rawStart = options.startAtMs ?? 0;
+  const startAtMs =
+    rawStart > 0 && rawStart < timeline.totalDurationMs ? rawStart : 0;
+
   // 3) Enter playback mode — suppresses flush/persist so playback can freely
   //    push chrome styles into the live stores without corrupting saved data.
   slidesStore.setPlaybackMode(true);
   playback.setIsPlaying(true);
-  playback.setCurrentTimeMs(0);
+  playback.setCurrentTimeMs(startAtMs);
 
-  const timeline = buildTimelineFromSlides();
   const startT = performance.now();
 
   // Apply the interpolated chrome EVERY frame so padding/radius/opacity and the
@@ -132,10 +155,10 @@ export function startPlayback(options: StartOptions = {}): void {
   // playback-scoped write: playbackMode suppresses flush/persist so saved slides
   // are untouched. Preview and export now share `applyChromeAtTime`, so both
   // paths render the identical, seek-exact chrome for a given time.
-  applyChromeAtTime(0, timeline);
+  applyChromeAtTime(startAtMs, timeline);
 
   const tick = (now: number): void => {
-    const t = now - startT;
+    const t = startAtMs + (now - startT);
     playback.setCurrentTimeMs(t);
 
     applyChromeAtTime(t, timeline);
@@ -149,6 +172,55 @@ export function startPlayback(options: StartOptions = {}): void {
     rafId = requestAnimationFrame(tick);
   };
 
+  rafId = requestAnimationFrame(tick);
+}
+
+/**
+ * Play a one-shot REAL preview of a single boundary on the canvas: runs the rAF
+ * loop over just that boundary's transition window (see {@link boundaryPreviewWindow})
+ * using the same playback machinery (playbackMode suppression + full restore).
+ * Idempotent while already playing/previewing. Escape or a click cancels via the
+ * usual {@link stopPlayback}. Falls back to a no-op when the boundary has no
+ * animated entry (e.g. a `none` cut).
+ */
+export function previewTransition(
+  boundaryIndex: number,
+  options: StartOptions = {},
+): void {
+  if (rafId !== null) return;
+
+  const slidesStore = getSlidesStore();
+  const playback = getPlaybackStore();
+  if (slidesStore.state.slides.length === 0) return;
+
+  const timeline = buildTimelineFromSlides();
+  const window = boundaryPreviewWindow(timeline, boundaryIndex);
+  if (!window) return;
+
+  // Mirror startPlayback's data-loss guard + restore setup.
+  slidesStore.flushCurrentSlideSnapshot();
+  restoreSlide =
+    slidesStore.state.slides[slidesStore.state.activeSlideIndex] ?? null;
+  activeOnStop = options.onStop;
+
+  slidesStore.setPlaybackMode(true);
+  playback.setIsPlaying(true);
+  playback.setCurrentTimeMs(window.startMs);
+  applyChromeAtTime(window.startMs, timeline);
+
+  const startT = performance.now();
+  const tick = (now: number): void => {
+    const t = window.startMs + (now - startT);
+    playback.setCurrentTimeMs(t);
+    applyChromeAtTime(t, timeline);
+    options.onFrame?.(t);
+
+    if (t >= window.endMs) {
+      stopPlayback();
+      return;
+    }
+    rafId = requestAnimationFrame(tick);
+  };
   rafId = requestAnimationFrame(tick);
 }
 

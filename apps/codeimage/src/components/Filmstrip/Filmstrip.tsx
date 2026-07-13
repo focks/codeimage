@@ -3,10 +3,12 @@ import {Tooltip} from '@codeui/kit';
 import clsx from 'clsx';
 import {createEffect, For, on} from 'solid-js';
 import {PlusIcon} from '../Icons/PlusIcon';
+import {DurationChip} from './DurationChip';
 import {DuplicateIcon, TrashIcon} from './FilmstripIcons';
 import * as styles from './Filmstrip.css';
-import {SlideSettingsPopover} from './SlideSettingsPopover';
 import {SlideThumbnail} from './SlideThumbnail';
+import {TransitionPicker} from './TransitionPicker';
+import * as chipStyles from './TransitionChip.css';
 
 /**
  * The slide filmstrip: a horizontally-scrolling row of miniature slide previews
@@ -79,65 +81,81 @@ export function Filmstrip() {
           const isActive = () => slidesStore.state.activeSlideIndex === index();
 
           return (
-            <button
-              ref={el => (cardRefs[index()] = el)}
-              type="button"
-              role="tab"
-              aria-selected={isActive()}
-              aria-label={`Slide ${index() + 1}`}
-              class={clsx(
-                styles.slideCard,
-                isActive() && styles.slideCardActive,
-              )}
-              onClick={() => slidesStore.actions.setActiveSlide(index())}
-            >
-              <SlideThumbnail slide={slide} />
-
-              <span class={styles.slideNumber}>{index() + 1}</span>
-
-              {/* Hover/focus action overlay */}
-              <div
-                class={styles.slideActions}
-                onClick={e => e.stopPropagation()}
-              >
-                <SlideSettingsPopover index={index()} slide={slide} />
-
-                <Tooltip
-                  content={'Duplicate slide'}
-                  theme={'secondary'}
-                  placement={'top'}
-                >
-                  <button
-                    type="button"
-                    class={styles.actionIconBtn}
-                    aria-label="Duplicate slide"
-                    onClick={() => slidesStore.actions.duplicateSlide(index())}
-                  >
-                    <DuplicateIcon size={'xs'} />
-                  </button>
-                </Tooltip>
-
-                <Tooltip
-                  content={
-                    isSingleSlide()
-                      ? 'A deck needs at least one slide'
-                      : 'Delete slide'
-                  }
-                  theme={'secondary'}
-                  placement={'top'}
-                >
-                  <button
-                    type="button"
-                    class={styles.actionIconBtn}
-                    aria-label="Delete slide"
-                    onClick={() => slidesStore.actions.removeSlide(index())}
-                    disabled={isSingleSlide()}
-                  >
-                    <TrashIcon size={'xs'} />
-                  </button>
-                </Tooltip>
+            <>
+              {/*
+                Transition chip in the gap BEFORE this card. Chip `index()` edits
+                slide `index()`'s incoming transition — the intro (index 0) or the
+                transition INTO this slide from the previous one.
+              */}
+              <div class={chipStyles.chipSlot}>
+                <TransitionPicker boundaryIndex={index()} />
               </div>
-            </button>
+
+              <button
+                ref={el => (cardRefs[index()] = el)}
+                type="button"
+                role="tab"
+                aria-selected={isActive()}
+                aria-label={`Slide ${index() + 1}`}
+                class={clsx(
+                  styles.slideCard,
+                  isActive() && styles.slideCardActive,
+                )}
+                onClick={() => slidesStore.actions.setActiveSlide(index())}
+              >
+                <SlideThumbnail slide={slide} />
+
+                <span class={styles.slideNumber}>{index() + 1}</span>
+
+                {/* Duration ("2.5s") chip pinned bottom-right. */}
+                <div onClick={e => e.stopPropagation()}>
+                  <DurationChip index={index()} slide={slide} />
+                </div>
+
+                {/* Hover/focus action overlay (duplicate / delete) */}
+                <div
+                  class={styles.slideActions}
+                  onClick={e => e.stopPropagation()}
+                >
+                  <Tooltip
+                    content={'Duplicate slide'}
+                    theme={'secondary'}
+                    placement={'top'}
+                  >
+                    <button
+                      type="button"
+                      class={styles.actionIconBtn}
+                      aria-label="Duplicate slide"
+                      onClick={() =>
+                        slidesStore.actions.duplicateSlide(index())
+                      }
+                    >
+                      <DuplicateIcon size={'xs'} />
+                    </button>
+                  </Tooltip>
+
+                  <Tooltip
+                    content={
+                      isSingleSlide()
+                        ? 'A deck needs at least one slide'
+                        : 'Delete slide'
+                    }
+                    theme={'secondary'}
+                    placement={'top'}
+                  >
+                    <button
+                      type="button"
+                      class={styles.actionIconBtn}
+                      aria-label="Delete slide"
+                      onClick={() => slidesStore.actions.removeSlide(index())}
+                      disabled={isSingleSlide()}
+                    >
+                      <TrashIcon size={'xs'} />
+                    </button>
+                  </Tooltip>
+                </div>
+              </button>
+            </>
           );
         }}
       </For>

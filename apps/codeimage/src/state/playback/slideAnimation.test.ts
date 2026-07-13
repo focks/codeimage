@@ -44,14 +44,32 @@ describe('resolveSlideInputs', () => {
   it('collapses inherit chains + carries per-slide overrides', () => {
     const slides = [
       {}, // slide 0, inherits => typewriter (typingIntro on)
-      {transitionIn: 'fade' as const, holdMs: 500},
+      {transitionIn: 'fade' as const, holdMs: 500, transitionMs: 1200},
       {transitionIn: 'inherit' as const, typewriterCharMs: 40},
     ];
     const inputs = resolveSlideInputs(slides, [12, 6, 6], base);
     expect(inputs).toEqual([
-      {charCount: 12, entryMode: 'typewriter', holdMs: undefined, typewriterCharMs: undefined},
-      {charCount: 6, entryMode: 'fade', holdMs: 500, typewriterCharMs: undefined},
-      {charCount: 6, entryMode: 'morph', holdMs: undefined, typewriterCharMs: 40},
+      {
+        charCount: 12,
+        entryMode: 'typewriter',
+        holdMs: undefined,
+        typewriterCharMs: undefined,
+        transitionMs: undefined,
+      },
+      {
+        charCount: 6,
+        entryMode: 'fade',
+        holdMs: 500,
+        typewriterCharMs: undefined,
+        transitionMs: 1200,
+      },
+      {
+        charCount: 6,
+        entryMode: 'morph',
+        holdMs: undefined,
+        typewriterCharMs: 40,
+        transitionMs: undefined,
+      },
     ]);
   });
 

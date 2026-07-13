@@ -200,23 +200,3 @@ export const reorderButton = style({
   },
 });
 
-// ── Per-slide settings popover panel ────────────────────────────────────────
-export const slideSettingsPanel = style({
-  display: 'flex',
-  flexDirection: 'column',
-  gap: themeVars.spacing['3'],
-  padding: themeVars.spacing['2'],
-  minWidth: '200px',
-});
-
-export const slideSettingsRow = style({
-  display: 'flex',
-  flexDirection: 'column',
-  gap: themeVars.spacing['1'],
-});
-
-export const slideSettingsLabel = style({
-  fontSize: themeVars.fontSize.xs,
-  color: themeVars.dynamicColors.panel.textColorAlt,
-  userSelect: 'none',
-});

@@ -23,3 +23,93 @@ export function TrashIcon(props: SvgIconProps) {
     </SvgIcon>
   );
 }
+
+/** Clock — "duration" chip glyph (how long a slide stays on screen). */
+export function ClockIcon(props: SvgIconProps) {
+  return (
+    <SvgIcon viewBox="0 0 20 20" fill="none" stroke="currentColor" {...props}>
+      <circle cx="10" cy="10" r="7" stroke-width="1.6" />
+      <path
+        d="M10 6v4l2.5 1.5"
+        stroke-width="1.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </SvgIcon>
+  );
+}
+
+// ── Per-mode transition mini-icons ──────────────────────────────────────────
+// Distinct glyphs so a boundary chip reads its incoming slide's resolved mode at
+// a glance. Stroke-based, currentColor, sized by the SvgIcon `size` prop.
+
+/** None — a slash (hard cut, no animation). */
+export function TransitionNoneIcon(props: SvgIconProps) {
+  return (
+    <SvgIcon viewBox="0 0 20 20" fill="none" stroke="currentColor" {...props}>
+      <circle cx="10" cy="10" r="7" stroke-width="1.5" />
+      <path d="M6 14 14 6" stroke-width="1.6" stroke-linecap="round" />
+    </SvgIcon>
+  );
+}
+
+/** Fade — two overlapping squares, one faint (a cross-dissolve). */
+export function TransitionFadeIcon(props: SvgIconProps) {
+  return (
+    <SvgIcon viewBox="0 0 20 20" fill="none" stroke="currentColor" {...props}>
+      <rect
+        x="3.5"
+        y="3.5"
+        width="9"
+        height="9"
+        rx="1.6"
+        stroke-width="1.5"
+        opacity="0.45"
+      />
+      <rect x="7.5" y="7.5" width="9" height="9" rx="1.6" stroke-width="1.5" />
+    </SvgIcon>
+  );
+}
+
+/** Slide — an arrow moving right (lines slide in). */
+export function TransitionSlideIcon(props: SvgIconProps) {
+  return (
+    <SvgIcon viewBox="0 0 20 20" fill="none" stroke="currentColor" {...props}>
+      <path
+        d="M3 10h11"
+        stroke-width="1.6"
+        stroke-linecap="round"
+      />
+      <path
+        d="M10 6l4 4-4 4"
+        stroke-width="1.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </SvgIcon>
+  );
+}
+
+/** Morph — two arrows merging/shuffling (magic move). */
+export function TransitionMorphIcon(props: SvgIconProps) {
+  return (
+    <SvgIcon viewBox="0 0 20 20" fill="none" stroke="currentColor" {...props}>
+      <path
+        d="M3 6h8l-2-2M17 14H9l2 2"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </SvgIcon>
+  );
+}
+
+/** Typewriter — a text cursor next to type (typing reveal). */
+export function TransitionTypewriterIcon(props: SvgIconProps) {
+  return (
+    <SvgIcon viewBox="0 0 20 20" fill="none" stroke="currentColor" {...props}>
+      <path d="M6 4h4M6 16h4M8 4v12" stroke-width="1.6" stroke-linecap="round" />
+      <path d="M13.5 7v6" stroke-width="1.8" stroke-linecap="round" />
+    </SvgIcon>
+  );
+}

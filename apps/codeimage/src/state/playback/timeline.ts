@@ -73,6 +73,11 @@ export interface SlideTimelineInput {
   readonly entryMode: EntryMode;
   readonly holdMs?: number;
   readonly typewriterCharMs?: number;
+  /**
+   * Per-slide entry (fade/slide/morph) duration override in ms. `undefined` falls
+   * back to the global `transitionMs`. Ignored for `typewriter`/`none` entries.
+   */
+  readonly transitionMs?: number;
 }
 
 /** Length of the code string for a slide's active editor tab. */
@@ -151,8 +156,14 @@ function entryDurationMs(
       return 0;
     case 'typewriter':
       return typewriterEntryDurationMs(slide, settings);
-    default:
-      return Math.max(0, settings.transitionMs);
+    default: {
+      // Prefer the per-slide entry-duration override; else the global default.
+      const value =
+        slide.transitionMs != null && slide.transitionMs > 0
+          ? slide.transitionMs
+          : settings.transitionMs;
+      return Math.max(0, value);
+    }
   }
 }
 

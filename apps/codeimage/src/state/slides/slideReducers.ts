@@ -76,10 +76,10 @@ export function reduceSetActiveSlide(
   return {...state, activeSlideIndex: index};
 }
 
-/** Per-slide playback overrides patchable via the filmstrip settings popover. */
+/** Per-slide playback overrides patchable via the filmstrip transition chips. */
 export type SlideSettingsPatch = Pick<
   Slide,
-  'transitionIn' | 'holdMs' | 'typewriterCharMs'
+  'transitionIn' | 'transitionMs' | 'holdMs' | 'typewriterCharMs'
 >;
 
 /**

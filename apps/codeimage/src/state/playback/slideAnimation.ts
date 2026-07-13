@@ -39,6 +39,7 @@ export function resolveEntryMode(
 /** Per-slide fields the resolver reads (a subset of `Slide`). */
 export interface ResolvableSlide {
   readonly transitionIn?: SlideTransitionIn;
+  readonly transitionMs?: number;
   readonly holdMs?: number;
   readonly typewriterCharMs?: number;
 }
@@ -57,5 +58,6 @@ export function resolveSlideInputs(
     entryMode: resolveEntryMode(slide.transitionIn, i === 0, settings),
     holdMs: slide.holdMs,
     typewriterCharMs: slide.typewriterCharMs,
+    transitionMs: slide.transitionMs,
   }));
 }

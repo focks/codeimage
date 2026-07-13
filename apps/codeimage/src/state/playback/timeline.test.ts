@@ -98,6 +98,29 @@ describe('buildTimeline', () => {
       'hold',
     ]);
   });
+
+  it('per-slide transitionMs overrides the global entry duration', () => {
+    // slide 1 (fade) overrides transitionMs=1200; slide 2 (morph) inherits 500.
+    const inputs: SlideTimelineInput[] = [
+      {charCount: 10, entryMode: 'none'},
+      {charCount: 10, entryMode: 'fade', transitionMs: 1200},
+      {charCount: 10, entryMode: 'morph'},
+    ];
+    const timeline = buildTimeline(inputs, noTyping);
+    const transitions = timeline.segments.filter(s => s.phase === 'transition');
+    expect(transitions[0].durationMs).toBe(1200); // per-slide override
+    expect(transitions[1].durationMs).toBe(500); // inherited global
+  });
+
+  it('per-slide transitionMs is ignored for typewriter/none entries', () => {
+    // A typewriter entry stays charCount-driven even with transitionMs set.
+    const inputs: SlideTimelineInput[] = [
+      {charCount: 30, entryMode: 'typewriter', transitionMs: 9999},
+    ];
+    const timeline = buildTimeline(inputs, settings);
+    // 30 chars at 100ms/char (10 cps) => 3000ms, not 9999.
+    expect(timeline.segments[0]).toMatchObject({phase: 'typing', durationMs: 3000});
+  });
 });
 
 describe('stateAt', () => {

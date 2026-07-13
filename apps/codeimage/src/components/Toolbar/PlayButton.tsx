@@ -1,5 +1,7 @@
 import {getPlaybackStore} from '@codeimage/store/playback/playbackStore';
 import {
+  buildTimelineFromSlides,
+  slideEntryStartMs,
   startPlayback,
   stopPlayback,
 } from '@codeimage/store/playback/playbackController';
@@ -25,9 +27,11 @@ const StopIcon = (props: SvgIconProps) => (
 );
 
 /**
- * Toggles fullcanvas playback. Play starts from slide 1; the button becomes Stop
- * while playing. Escape also stops. On stop/finish the controller restores the
- * user's pre-playback active slide and live-store state exactly.
+ * Toggles fullcanvas playback. Play PRESENTS FROM THE ACTIVE SLIDE (Canva presents
+ * from the current page) — the deck plays from the active slide's entry to the end;
+ * the button becomes Stop while playing. Escape also stops. On stop/finish the
+ * controller restores the user's pre-playback active slide + live-store state
+ * exactly. (Export still plays the whole deck from slide 0 via its own path.)
  */
 export function PlayButton() {
   const modality = useModality();
@@ -41,7 +45,14 @@ export function PlayButton() {
     if (playback.isPlaying) {
       stopPlayback();
     } else {
-      startPlayback();
+      // Present from the active slide's entry. The controller clamps a start
+      // at/after the end back to 0, so playing from the last slide still works.
+      const timeline = buildTimelineFromSlides();
+      const startAtMs = slideEntryStartMs(
+        timeline,
+        slidesStore.state.activeSlideIndex,
+      );
+      startPlayback({startAtMs});
     }
   };
 

@@ -9,6 +9,10 @@ import {
   untrack,
 } from 'solid-js';
 import {createStore} from 'solid-js/store';
+import {
+  computeResizeHeight,
+  type VerticalResizeGeometry,
+} from './resizeMath';
 
 /**
  * Vertical drag-to-resize for the frame window — the height counterpart of
@@ -60,12 +64,6 @@ interface VerticalResizeState {
   startY: number;
 }
 
-function clamp(value: number, min: number, max: number): number {
-  if (value < min) return min;
-  if (max > 0 && value > max) return max;
-  return value;
-}
-
 /**
  * The effective height floor for a vertical drag: the larger of the absolute hard
  * minimum (keeps the header visible) and the user-set minHeight (`0` = off). Pure
@@ -92,36 +90,67 @@ export function createVerticalResize(
     startY: 0,
   });
 
+  // Drag geometry captured once at pointer-down (direction + start height/Y +
+  // floor), so a live move is pure arithmetic with no forced layout — the box edge
+  // tracks the cursor 1:1. Null when not dragging. Mirrors the horizontal hook.
+  let geometry: VerticalResizeGeometry | null = null;
+  // rAF coalescing: keep only the latest Y and flush once per animation frame, so
+  // a fast pointer never runs the resize math (or a reactive write) more than once
+  // per painted frame.
+  let pendingY: number | null = null;
+  let rafId = 0;
+
   const resizeStart = (y: number): void =>
     batch(() => {
       setResizing(true);
-      const initialHeight = (state.height || untrack(ref)?.offsetHeight) ?? 0;
+      const elementRef = untrack(ref);
+      const rect = elementRef?.getBoundingClientRect();
+      const initialHeight = (state.height || elementRef?.offsetHeight) ?? 0;
       setState({startHeight: initialHeight, startY: y});
+      // Grow away from the vertical centre: pulling the bottom handle down or the
+      // top handle up both enlarge the box (mirrors the horizontal LTR/RTL logic).
+      // Direction is fixed at pointer-down from the handle's side of the centre.
+      const middle = rect ? rect.top + rect.height / 2 : y;
+      geometry = {
+        startHeight: initialHeight,
+        startY: y,
+        isTop: y < middle,
+        // Floor is the user's minHeight (if set), else the sane absolute minimum —
+        // NOT the content height, so a drag can shrink the window below its content
+        // (CLIP-to-frame), the opposite of width's CLAMP-to-content.
+        floor: resolveHeightFloor(options.minHeight, options.userMinHeight()),
+        maxHeight: options.maxHeight,
+      };
     });
 
   const resizeMove = (y: number): void => {
-    const elementRef = ref();
-    if (!elementRef) return;
-    const {top, height} = elementRef.getBoundingClientRect();
-    const middle = top + height / 2;
-    // Grow away from the vertical centre: pulling the bottom handle down or the
-    // top handle up both enlarge the box (mirrors the horizontal LTR/RTL logic).
-    const isTop = state.startY < middle;
-    const delta = isTop ? state.startY - y : y - state.startY;
-    // Floor is the user's minHeight (if set), else the sane absolute minimum — NOT
-    // the content height. Dragging up therefore shrinks the window below its
-    // natural content and the code clips at the bottom (CLIP-to-frame choice), the
-    // opposite of width which clamps to `max-content` so the code never wraps.
-    const floor = resolveHeightFloor(
-      options.minHeight,
-      options.userMinHeight(),
-    );
-    const next = clamp(state.startHeight + delta, floor, options.maxHeight);
-    setState({height: next});
+    if (!geometry) return;
+    setState({height: computeResizeHeight(y, geometry)});
+  };
+
+  const queueMove = (y: number): void => {
+    pendingY = y;
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => {
+      rafId = 0;
+      const y = pendingY;
+      pendingY = null;
+      if (y != null) resizeMove(y);
+    });
+  };
+
+  const cancelPendingMove = (): void => {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = 0;
+    pendingY = null;
   };
 
   const resizeEnd = (): void => {
     if (!resizing()) return;
+    // Flush any pending frame so the committed height equals the last dragged Y.
+    if (pendingY != null) resizeMove(pendingY);
+    cancelPendingMove();
+    geometry = null;
     setResizing(false);
     if (state.height > 0) options.onCommit(Math.round(state.height));
   };
@@ -130,7 +159,7 @@ export function createVerticalResize(
     if (!resizing()) resizeStart(clientY);
   };
   const onMouseMove = ({clientY}: MouseEvent): void => {
-    if (resizing()) resizeMove(clientY);
+    if (resizing()) queueMove(clientY);
   };
 
   createEffect(
@@ -154,6 +183,8 @@ export function createVerticalResize(
       },
     ),
   );
+
+  onCleanup(cancelPendingMove);
 
   return {
     ref,

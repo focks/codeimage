@@ -9,8 +9,12 @@ import {
   untrack,
 } from 'solid-js';
 import {createStore} from 'solid-js/store';
-import {nonNullable} from '../constants/non-nullable';
 import {fitAspect} from '../helpers/aspectRatio';
+import {
+  computeResizeWidth,
+  resolveHandleDirection,
+  type HorizontalResizeGeometry,
+} from './resizeMath';
 
 interface CreateDraggableReturn {
   width: Accessor<number>;
@@ -42,7 +46,6 @@ export function createHorizontalResize(
   const [resizing, setResizing] = createSignal<boolean>(false);
   const [minWidth, setMinWidth] = createSignal<number>(options?.minWidth ?? 0);
   const [maxWidth, setMaxWidth] = createSignal<number>(options?.maxWidth ?? 0);
-  let refreshing = false;
 
   const [state, setState] = createStore<CreateDraggableState>({
     startWidth: 0,
@@ -50,6 +53,17 @@ export function createHorizontalResize(
     height: 0,
     startX: 0,
   });
+
+  // Drag geometry captured once at pointer-down (direction + content floor), so a
+  // live move is pure arithmetic with no forced layout. Null when not dragging.
+  let geometry: HorizontalResizeGeometry | null = null;
+  // rAF coalescing: a fast pointer fires many moves per frame. We keep only the
+  // latest X and flush it once per animation frame, so the box tracks the cursor
+  // 1:1 without ever running the resize math (or a reactive write) more than once
+  // per painted frame. This replaces the old "drop the move while busy" guard,
+  // which fell arbitrarily far behind the cursor on a fast drag.
+  let pendingX: number | null = null;
+  let rafId = 0;
 
   const onResizeStart = ({clientX}: MouseEvent): void => {
     if (!resizing()) {
@@ -65,7 +79,7 @@ export function createHorizontalResize(
 
   const onMouseMove = ({clientX}: MouseEvent): void => {
     if (resizing()) {
-      resizeMove(clientX);
+      queueMove(clientX);
     }
   };
 
@@ -75,77 +89,127 @@ export function createHorizontalResize(
     }
   };
 
-  function clamp(value: number, min?: number, max?: number) {
-    if (nonNullable(min) && value < min) {
-      return min;
-    }
-    if (!!max && value > max) {
-      return max;
-    }
-    return value;
-  }
+  /**
+   * Measure the intrinsic content floor once: the width the browser renders when
+   * the requested width is smaller than the content (`min-width: max-content`).
+   * The one forced layout of a drag lives here, at pointer-down — not per move.
+   */
+  const measureContentFloor = (elementRef: HTMLElement): number => {
+    const prev = elementRef.style.width;
+    elementRef.style.setProperty('width', '0px');
+    const floor = Math.floor(elementRef.getBoundingClientRect().width);
+    if (prev) elementRef.style.setProperty('width', prev);
+    else elementRef.style.removeProperty('width');
+    return floor;
+  };
 
-  const resizeMove = (x: number): void => {
-    if (refreshing) return;
-    const elementRef = ref();
-    if (!elementRef) return;
-    refreshing = true;
-    const {width, left} = elementRef.getBoundingClientRect();
-    const middle = left + width / 2;
-    const min = minWidth();
-    const max = maxWidth();
-    const isLTR = state.startX > middle;
-    let computedWidth = isLTR
-      ? state.startWidth + x - state.startX
-      : state.startWidth - x + state.startX;
-    elementRef.style.setProperty('width', `${computedWidth}px`);
-    const nativeWidth = Math.floor(elementRef.getBoundingClientRect().width);
-    elementRef.style.removeProperty('width');
-    if (nativeWidth !== computedWidth) computedWidth = nativeWidth;
-    const newWidth = clamp(
-      computedWidth,
-      computedWidth < min ? computedWidth - 1 : min,
-      computedWidth < max ? 0 : max,
-    );
+  const measureContentHeight = (elementRef: HTMLElement): number => {
+    const prev = elementRef.style.height;
+    elementRef.style.setProperty('height', 'auto');
+    const height = Math.floor(elementRef.clientHeight);
+    if (prev) elementRef.style.setProperty('height', prev);
+    else elementRef.style.removeProperty('height');
+    return height;
+  };
+
+  // The natural content height at drag start, used to floor the aspect-ratio
+  // height so a wide/aspect drag never crops the code. Cached with the geometry.
+  let contentHeightFloor = 0;
+
+  const queueMove = (x: number): void => {
+    pendingX = x;
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => {
+      rafId = 0;
+      const x = pendingX;
+      pendingX = null;
+      if (x != null) resizeMove(x);
+    });
+  };
+
+  const cancelPendingMove = (): void => {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = 0;
+    pendingX = null;
+  };
+
+  // Turn a resolved width into state, applying the aspect-ratio coupling. Shared by
+  // the live drag (pure math) and the refresh/aspect recompute (measured once).
+  const applyWidth = (newWidth: number): void => {
     const aspectRatio = options?.aspectRatio?.();
     if (aspectRatio) {
-      elementRef.style.setProperty('height', 'auto');
-      const maybeMinHeight = Math.floor(elementRef.clientHeight);
-      elementRef.style.removeProperty('height');
       let newHeight = Math.floor(newWidth / aspectRatio);
-      if (newHeight < maybeMinHeight) {
-        newHeight = maybeMinHeight;
-      }
-      elementRef.style.setProperty('height', `${newHeight}px`);
-      const scrollHeight = Math.floor(elementRef.scrollHeight);
-      elementRef.style.removeProperty('height');
-      if (scrollHeight > newHeight) {
-        newHeight = Math.floor(maybeMinHeight);
-      }
-      const aspect = fitAspect({
-        ratio: aspectRatio,
-        height: newHeight,
-      });
-      setState({
-        height: aspect.height,
-        width: aspect.width,
-      });
+      if (newHeight < contentHeightFloor) newHeight = contentHeightFloor;
+      const aspect = fitAspect({ratio: aspectRatio, height: newHeight});
+      setState({height: aspect.height, width: aspect.width});
     } else {
       setState({width: newWidth});
     }
-    refreshing = false;
+  };
+
+  // Live drag: pure arithmetic against the geometry captured at pointer-down. No
+  // DOM reads, no forced layout — so the box edge tracks the cursor 1:1.
+  const resizeMove = (x: number): void => {
+    if (!geometry) return;
+    applyWidth(computeResizeWidth(x, geometry));
+  };
+
+  // Refresh / aspect-ratio change: not a hot path. Re-measure the content floors
+  // and re-clamp the CURRENT width (content may have grown/shrunk, or the ratio
+  // changed). Runs at most on structural changes, never per pointer-move.
+  const recompute = (): void => {
+    const elementRef = ref();
+    if (!elementRef) return;
+    contentHeightFloor = measureContentHeight(elementRef);
+    const contentFloor = measureContentFloor(elementRef);
+    const current = state.width || Math.floor(elementRef.getBoundingClientRect().width);
+    const floor = Math.max(contentFloor, minWidth(), 0);
+    const max = maxWidth();
+    let width = current < floor ? floor : current;
+    if (max > 0 && width > max) width = max;
+    applyWidth(Math.round(width));
+  };
+
+  const captureGeometry = (
+    elementRef: HTMLElement,
+  ): HorizontalResizeGeometry => {
+    const {width, left} = elementRef.getBoundingClientRect();
+    const centre = left + width / 2;
+    return {
+      startWidth: state.startWidth || Math.floor(width),
+      startX: state.startX,
+      isLTR: resolveHandleDirection(state.startX, centre),
+      contentFloor: measureContentFloor(elementRef),
+      minWidth: minWidth(),
+      maxWidth: maxWidth(),
+    };
   };
 
   const resizeStart = (x: number): void =>
     batch(() => {
       setResizing(true);
-
-      const initialWidth = (state.width || untrack(ref)?.offsetWidth) ?? 0;
-
+      const elementRef = untrack(ref);
+      const initialWidth = (state.width || elementRef?.offsetWidth) ?? 0;
       setState({startWidth: initialWidth, startX: x});
+      // Capture the drag geometry (direction + content floors) ONCE, here, so the
+      // per-move path never forces layout. The content HEIGHT floor is only needed
+      // for the aspect-ratio coupling, so skip that reflow on a plain width drag.
+      if (elementRef) {
+        contentHeightFloor = options?.aspectRatio?.()
+          ? measureContentHeight(elementRef)
+          : 0;
+        geometry = captureGeometry(elementRef);
+      }
     });
 
-  const resizeEnd = (): boolean => setResizing(false);
+  const resizeEnd = (): void => {
+    // Flush any pending frame so the committed width equals the last dragged X
+    // exactly (nothing visually jumps at commit).
+    if (pendingX != null && geometry) resizeMove(pendingX);
+    cancelPendingMove();
+    geometry = null;
+    setResizing(false);
+  };
 
   const width = () => state.width;
   const height = () => state.height;
@@ -182,7 +246,7 @@ export function createHorizontalResize(
               setState({height: 0});
               return;
             }
-            resizeMove(0);
+            recompute();
           },
           {
             defer: true,
@@ -218,6 +282,8 @@ export function createHorizontalResize(
     ),
   );
 
+  onCleanup(cancelPendingMove);
+
   return {
     ref,
     setRef,
@@ -226,7 +292,7 @@ export function createHorizontalResize(
     height,
     onResizeStart,
     refresh() {
-      resizeMove(0);
+      recompute();
     },
   };
 }

@@ -10,8 +10,10 @@ import {
   PopoverContent,
   PopoverTrigger,
   Select,
+  Tooltip,
 } from '@codeui/kit';
 import {createMemo, Show} from 'solid-js';
+import {SettingsIcon} from '../Icons/SettingsIcon';
 import * as styles from './Filmstrip.css';
 
 // Per-slide transition-in options. `inherit` maps to the global default mode.
@@ -49,7 +51,11 @@ export function SlideSettingsPopover(props: SlideSettingsPopoverProps) {
 
   // The concrete mode this slide will actually play (inherit chain collapsed).
   const resolvedMode = createMemo(() =>
-    resolveEntryMode(props.slide.transitionIn, props.index === 0, playback.settings),
+    resolveEntryMode(
+      props.slide.transitionIn,
+      props.index === 0,
+      playback.settings,
+    ),
   );
 
   // NumberField emits number | null | undefined; empty clears the override.
@@ -68,17 +74,21 @@ export function SlideSettingsPopover(props: SlideSettingsPopoverProps) {
 
   return (
     <Popover placement={'top'}>
-      <PopoverTrigger
-        as={'button'}
-        class={styles.actionIconBtn}
-        title={'Slide settings'}
-        aria-label={`Settings for slide ${props.index + 1}`}
-        onClick={(e: MouseEvent) => e.stopPropagation()}
-      >
-        ⚙
-      </PopoverTrigger>
+      <Tooltip content={'Slide settings'} theme={'secondary'} placement={'top'}>
+        <PopoverTrigger
+          as={'button'}
+          class={styles.actionIconBtn}
+          aria-label={`Settings for slide ${props.index + 1}`}
+          onClick={(e: MouseEvent) => e.stopPropagation()}
+        >
+          <SettingsIcon size={'xs'} />
+        </PopoverTrigger>
+      </Tooltip>
       <PopoverContent title={`Slide ${props.index + 1} settings`}>
-        <div class={styles.slideSettingsPanel} onClick={e => e.stopPropagation()}>
+        <div
+          class={styles.slideSettingsPanel}
+          onClick={e => e.stopPropagation()}
+        >
           <label class={styles.slideSettingsRow}>
             <span class={styles.slideSettingsLabel}>Transition in</span>
             {/*@ts-expect-error Fix @codeui/kit select types*/}
@@ -118,7 +128,9 @@ export function SlideSettingsPopover(props: SlideSettingsPopoverProps) {
 
           <Show when={resolvedMode() === 'typewriter'}>
             <label class={styles.slideSettingsRow}>
-              <span class={styles.slideSettingsLabel}>Type speed (ms/char)</span>
+              <span class={styles.slideSettingsLabel}>
+                Type speed (ms/char)
+              </span>
               <NumberField
                 size={'xs'}
                 id={`slide-${props.index}-charms`}
@@ -127,7 +139,8 @@ export function SlideSettingsPopover(props: SlideSettingsPopoverProps) {
                 max={bounds.typewriterCharMs.max}
                 step={bounds.typewriterCharMs.step}
                 value={
-                  props.slide.typewriterCharMs ?? (undefined as unknown as number)
+                  props.slide.typewriterCharMs ??
+                  (undefined as unknown as number)
                 }
                 onChange={onCharMsChange}
               />

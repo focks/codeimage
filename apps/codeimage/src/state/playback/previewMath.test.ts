@@ -83,7 +83,9 @@ describe('slideEntryStartMs', () => {
 
   it('a mid-deck typewriter entry still starts at its entry, not its hold', () => {
     // Slide 1 explicitly types in (an i>0 typewriter entry is tagged `transition`).
-    // typing0[0,1000) hold0[1000,2000) transition(type)0->1[2000,3000) hold1[3000,4000)
+    // Each typewriter entry now carries beats: slide 0 = 1000 type + 300 empty =
+    // 1300ms; slide 1 = 150 clear + 300 empty + 1000 type = 1450ms.
+    // typing0[0,1300) hold0[1300,2300) transition0->1[2300,3750) hold1[3750,4750)
     const typed = buildTimeline(
       [
         {charCount: 10, entryMode: 'typewriter'},
@@ -93,7 +95,7 @@ describe('slideEntryStartMs', () => {
     );
     const start = slideEntryStartMs(typed, 1);
     // The transition (entry into slide 1) begins after slide 0's typing + hold.
-    expect(start).toBe(2000);
+    expect(start).toBe(2300);
     const frame = stateAt(typed, start);
     expect(frame.phase).toBe('transition');
     expect(frame.mode).toBe('typewriter'); // the entry animation, not the hold
@@ -103,12 +105,13 @@ describe('slideEntryStartMs', () => {
 
 describe('boundaryPreviewWindow', () => {
   it('slide 0 intro window wraps the typing segment (padded, clamped at 0)', () => {
-    // With typingIntro on: typing[0,1000) then holds/transitions after.
+    // With typingIntro on: slide 0 typewriter = 1000 type + 300 empty beat = 1300ms,
+    // so typing[0,1300) then holds/transitions after.
     const withIntro = buildTimeline([10, 10], settings);
     const w = boundaryPreviewWindow(withIntro, 0);
     expect(w).not.toBeNull();
     expect(w!.startMs).toBe(0); // 0 - 150 clamped to 0
-    expect(w!.endMs).toBe(1000 + PREVIEW_PAD_MS); // typing ends at 1000
+    expect(w!.endMs).toBe(1300 + PREVIEW_PAD_MS); // typing ends at 1300
   });
 
   it('a mid-deck boundary window wraps its transition, padded both sides', () => {

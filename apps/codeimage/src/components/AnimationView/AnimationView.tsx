@@ -2,8 +2,17 @@ import {getRootEditorStore} from '@codeimage/store/editor';
 import {activeEditorOf} from '@codeimage/store/playback/playbackController';
 import {getPlaybackStore} from '@codeimage/store/playback/playbackStore';
 import {buildTimelineFromSlides} from '@codeimage/store/playback/playbackController';
-import {easeInOutCubic} from '@codeimage/store/playback/easing';
-import {stateAt, type EntryMode} from '@codeimage/store/playback/timeline';
+import {easeInOutCubic, easeOutCubic} from '@codeimage/store/playback/easing';
+import {
+  resolveTypewriterCharMs,
+  stateAt,
+  type EntryMode,
+} from '@codeimage/store/playback/timeline';
+import {resolveSlideInputs} from '@codeimage/store/playback/slideAnimation';
+import {
+  typewriterSizingSettleAt,
+  typewriterSubPhaseAt,
+} from '@codeimage/store/playback/typewriterPhases';
 import {getSlidesStore} from '@codeimage/store/slides';
 import type {Slide} from '@codeimage/store/slides/model';
 import {createResizeObserver} from '@solid-primitives/resize-observer';
@@ -115,6 +124,37 @@ export function AnimationView() {
     return stateAt(timeline, playback.currentTimeMs);
   });
 
+  // Resolved ms-per-char for every slide's typewriter entry (per-slide override, else
+  // the global rate). Drives the sub-phase split (clear/empty/type) and the box
+  // settle point so the renderer and sizing agree with the timeline's durations.
+  const slideCharMs = createMemo<number[]>(() => {
+    const slides = slidesStore.state.slides;
+    const inputs = resolveSlideInputs(
+      slides,
+      slides.map(() => 0),
+      playback.settings,
+    );
+    return inputs.map(input => resolveTypewriterCharMs(input, playback.settings));
+  });
+
+  // The slide ENTERING at the current frame (the one whose code the entry reveals):
+  // slide 0 on a `typing` frame, or slide i+1 on a `transition` into it. Its char
+  // count + resolved charMs size the sub-phase beats; `hasOutgoing` (a transition,
+  // i.e. there IS previous text) gates the leading `clear` beat.
+  const enteringTypewriter = createMemo(() => {
+    const f = frame();
+    if (f.mode !== 'typewriter') return undefined;
+    const sets = syncedSets();
+    const index = f.phase === 'transition' ? f.slideIndex + 1 : f.slideIndex;
+    const set = sets?.[index];
+    if (!set) return undefined;
+    return {
+      charCount: set.code.length,
+      charMs: slideCharMs()[index] ?? 0,
+      hasOutgoing: f.phase === 'transition',
+    };
+  });
+
   // Ghost-measured full-content box of every slide. Recomputed only when a slide's
   // rendered layout changes (code/theme/font), NOT per animation frame — so a
   // transition can lerp between two STABLE sizes purely from progress. Measuring
@@ -148,11 +188,28 @@ export function AnimationView() {
   // as the single source of truth for the floor (editor-identical semantics).
   const surfaceBox = createMemo<BoxSize | undefined>(() => {
     const f = frame();
+    // Typewriter transitions morph the window from the outgoing slide's box to the
+    // incoming slide's FULL box during clear+empty, then hold it FIXED while the text
+    // types in (a stable window — same intent as the ghost-sizing fix). We do this by
+    // rescaling the linear entry progress so it reaches 1 at the type-beat start
+    // (`settleAt`) and clamps there; non-typewriter transitions keep whole-segment
+    // interpolation. Slide 0's `typing` frame is not a transition, so its window sits
+    // at its own full box from t=0 (no morph) — exactly the desired behaviour.
+    const tw = enteringTypewriter();
+    let progress = f.progress;
+    if (f.phase === 'transition' && tw) {
+      const settleAt = typewriterSizingSettleAt(
+        tw.charCount,
+        tw.charMs,
+        tw.hasOutgoing,
+      );
+      progress = settleAt > 0 ? Math.min(1, f.progress / settleAt) : 1;
+    }
     return resolveSurfaceBox({
       boxes: slideBoxes(),
       slideIndex: f.slideIndex,
       isTransition: f.phase === 'transition',
-      easedProgress: easeInOutCubic(f.progress),
+      easedProgress: easeInOutCubic(progress),
     });
   });
 
@@ -200,7 +257,11 @@ export function AnimationView() {
                 />
               )}
             </For>
-            <PhaseRenderer sets={sets} frame={frame()} />
+            <PhaseRenderer
+              sets={sets}
+              frame={frame()}
+              typewriterCharMs={enteringTypewriter()?.charMs ?? 0}
+            />
           </>
         )}
       </Show>
@@ -246,6 +307,8 @@ function MeasureLayer(props: {
 interface PhaseRendererProps {
   sets: KeyedTokensInfo[];
   frame: ReturnType<typeof stateAt>;
+  /** Resolved ms-per-char of the entering typewriter slide (0 for non-typewriter). */
+  typewriterCharMs: number;
 }
 
 /**
@@ -263,13 +326,15 @@ function PhaseRenderer(props: PhaseRendererProps) {
     <Show when={currentSet()} keyed>
       {set => (
         <Switch fallback={<StaticPhase set={set} frame={props.frame} />}>
-          {/* Slide 0's entry from empty. */}
+          {/* Slide 0's entry from empty (no outgoing text -> no clear beat). */}
           <Match when={props.frame.phase === 'typing'}>
             <EntryRenderer
               from={emptyTokens(set)}
               to={set}
               mode={props.frame.mode}
               progress={props.frame.progress}
+              charMs={props.typewriterCharMs}
+              hasOutgoing={false}
             />
           </Match>
           {/* Change from the leaving slide into the entering (next) slide. */}
@@ -280,6 +345,8 @@ function PhaseRenderer(props: PhaseRendererProps) {
                 to={next}
                 mode={props.frame.mode}
                 progress={props.frame.progress}
+                charMs={props.typewriterCharMs}
+                hasOutgoing={true}
               />
             )}
           </Match>
@@ -295,11 +362,21 @@ function EntryRenderer(props: {
   to: KeyedTokensInfo;
   mode: EntryMode;
   progress: number;
+  /** ms-per-char of the entering typewriter slide (sizes the clear/empty/type beats). */
+  charMs: number;
+  /** True on a transition (there IS outgoing text): enables the leading clear beat. */
+  hasOutgoing: boolean;
 }) {
   return (
     <Switch fallback={<MorphPhase from={props.from} to={props.to} progress={props.progress} />}>
       <Match when={props.mode === 'typewriter'}>
-        <TypewriterPhase to={props.to} progress={props.progress} />
+        <TypewriterPhase
+          from={props.from}
+          to={props.to}
+          progress={props.progress}
+          charMs={props.charMs}
+          hasOutgoing={props.hasOutgoing}
+        />
       </Match>
       <Match when={props.mode === 'fade'}>
         <FadePhase from={props.from} to={props.to} progress={props.progress} />
@@ -325,23 +402,64 @@ function StaticPhase(props: {
 }
 
 /**
- * Typewriter entry: progressively reveal the target slide's code. On slide 0 this
- * types in from empty; on later slides it is the v1 "clear then type the new
- * slide" behaviour (the previous code is not shown during the type-in).
+ * Typewriter entry, split into three beats so every slide begins from a clean,
+ * empty editor before its code types in one character at a time (see
+ * `typewriterPhases.ts`):
+ *
+ *   clear (slides i>0 only) => the OUTGOING code fades out quickly (eased).
+ *   empty                   => nothing but the blinking caret — a clean empty beat.
+ *   type                    => the incoming code reveals char-by-char (linear) + caret.
+ *
+ * The active beat and its local progress are a pure function of the linear entry
+ * `progress` (via `typewriterSubPhaseAt`), so preview and export stay seek-exact.
  */
-function TypewriterPhase(props: {to: KeyedTokensInfo; progress: number}) {
-  const tokens = createMemo<RenderToken[]>(() =>
-    revealTypedTokens(props.to, props.progress),
+function TypewriterPhase(props: {
+  from: KeyedTokensInfo;
+  to: KeyedTokensInfo;
+  progress: number;
+  charMs: number;
+  hasOutgoing: boolean;
+}) {
+  const sub = createMemo(() =>
+    typewriterSubPhaseAt(
+      props.progress,
+      props.to.code.length,
+      props.charMs,
+      props.hasOutgoing,
+    ),
   );
-  // Caret blink derived deterministically from progress (pure — seek-exact).
+
+  // clear: outgoing tokens fading out (eased), no caret yet.
+  const clearOpacity = createMemo(() => 1 - easeOutCubic(sub().localProgress));
+  // type: chars revealed linearly by the beat-local progress.
+  const typedTokens = createMemo<RenderToken[]>(() =>
+    revealTypedTokens(props.to, sub().localProgress),
+  );
+  // Caret blink derived from the beat-local type progress (pure — seek-exact).
   const caretAlpha = createMemo(() =>
-    caretOpacity(props.progress, props.to.code.length),
+    caretOpacity(sub().localProgress, props.to.code.length),
   );
+
   return (
-    <pre class={styles.staticLayer}>
-      <TokenList tokens={tokens()} />
-      <span class={styles.caret} style={{opacity: String(caretAlpha())}} />
-    </pre>
+    <Switch>
+      <Match when={sub().phase === 'clear'}>
+        <pre class={styles.staticLayer} style={{opacity: String(clearOpacity())}}>
+          <TokenList tokens={fullTokens(props.from)} />
+        </pre>
+      </Match>
+      <Match when={sub().phase === 'empty'}>
+        {/* Clean empty-editor beat: only the blinking caret, no code. */}
+        <pre class={styles.staticLayer}>
+          <span class={styles.caret} style={{opacity: '1'}} />
+        </pre>
+      </Match>
+      <Match when={sub().phase === 'type'}>
+        <pre class={styles.staticLayer}>
+          <TokenList tokens={typedTokens()} />
+          <span class={styles.caret} style={{opacity: String(caretAlpha())}} />
+        </pre>
+      </Match>
+    </Switch>
   );
 }
 

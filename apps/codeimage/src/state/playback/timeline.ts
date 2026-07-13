@@ -7,6 +7,8 @@
  * wall-clock reads in this module — `stateAt` is a pure function of `(timeline, tMs)`.
  */
 
+import {typewriterEntryTotalMs} from './typewriterPhases';
+
 export interface PlaybackSettings {
   /** When true, slide #1's code types itself in before the first hold. */
   readonly typingIntro: boolean;
@@ -118,18 +120,32 @@ export function typingDurationMs(
 }
 
 /**
- * Resolve a slide's typewriter entry duration: prefer the per-slide ms-per-char
- * override, else derive ms-per-char from the global chars-per-second setting.
+ * Resolve a slide's ms-per-char: prefer the per-slide override, else derive it from
+ * the global chars-per-second setting. Kept separate so the entry-duration and the
+ * renderer both size the type beat from the identical value.
+ */
+export function resolveTypewriterCharMs(
+  slide: Pick<SlideTimelineInput, 'typewriterCharMs'>,
+  settings: PlaybackSettings,
+): number {
+  return slide.typewriterCharMs != null && slide.typewriterCharMs > 0
+    ? slide.typewriterCharMs
+    : charMsFromCharsPerSec(settings.typingCharsPerSec);
+}
+
+/**
+ * Resolve a slide's typewriter entry duration INCLUDING the leading beats: the
+ * empty-editor beat always, plus a quick clear beat when there is outgoing text
+ * (`hasOutgoing` — true for slides i>0, false for slide 0's intro from empty).
+ * `typewriterDurationMs` stays the pure type-time; the beats are added around it.
  */
 function typewriterEntryDurationMs(
   slide: SlideTimelineInput,
   settings: PlaybackSettings,
+  hasOutgoing: boolean,
 ): number {
-  const charMs =
-    slide.typewriterCharMs != null && slide.typewriterCharMs > 0
-      ? slide.typewriterCharMs
-      : charMsFromCharsPerSec(settings.typingCharsPerSec);
-  return typewriterDurationMs(slide.charCount, charMs);
+  const charMs = resolveTypewriterCharMs(slide, settings);
+  return typewriterEntryTotalMs(slide.charCount, charMs, hasOutgoing);
 }
 
 /** Resolved hold duration for a slide: per-slide override, else global. */
@@ -143,19 +159,23 @@ function holdDurationMs(
 
 /**
  * Duration of a slide's entry segment given its resolved mode:
- *   - `typewriter` => charCount × per-char timing
+ *   - `typewriter` => clear? + empty + charCount × per-char timing (the beats)
  *   - `none`       => 0 (hard cut, no segment)
  *   - fade/slide/morph => global transition duration
+ *
+ * `hasOutgoing` gates the typewriter `clear` beat (slide 0's intro has no outgoing
+ * text so it skips the clear); it is ignored by the other modes.
  */
 function entryDurationMs(
   slide: SlideTimelineInput,
   settings: PlaybackSettings,
+  hasOutgoing: boolean,
 ): number {
   switch (slide.entryMode) {
     case 'none':
       return 0;
     case 'typewriter':
-      return typewriterEntryDurationMs(slide, settings);
+      return typewriterEntryDurationMs(slide, settings, hasOutgoing);
     default: {
       // Prefer the per-slide entry-duration override; else the global default.
       const value =
@@ -215,7 +235,9 @@ export function buildTimeline(
 
   for (let i = 0; i < slides.length; i++) {
     const slide = slides[i];
-    const duration = entryDurationMs(slide, settings);
+    // Slide 0 enters from empty (no outgoing text -> no typewriter clear beat);
+    // later slides clear the previous slide first.
+    const duration = entryDurationMs(slide, settings, i > 0);
     // Slide 0 enters from empty (`typing` phase); later slides animate the change
     // from the previous slide (`transition` phase, carrying the leaving index).
     if (i === 0) {

@@ -4,9 +4,9 @@ import {resolveEntryMode, resolveSlideInputs} from './slideAnimation';
 import {
   buildTimeline,
   charMsFromCharsPerSec,
-  typewriterDurationMs,
   type PlaybackSettings,
 } from './timeline';
+import {typewriterEntryTotalMs} from './typewriterPhases';
 
 const base: PlaybackSettings = {
   typingIntro: true,
@@ -141,12 +141,13 @@ describe('default 3-slide deck timeline (complaint B/C regression)', () => {
     const charMs = charMsFromCharsPerSec(
       DEFAULT_PLAYBACK_SETTINGS.typingCharsPerSec,
     );
-    // Two boundaries (1->2 and 2->3), each typing the incoming slide's chars.
+    // Two boundaries (1->2 and 2->3), each typing the incoming slide's chars
+    // AFTER a clear+empty beat (these are transitions with outgoing text).
     expect(transitions).toHaveLength(2);
     transitions.forEach((seg, i) => {
       expect(seg.mode).toBe('typewriter');
       expect(seg.durationMs).toBe(
-        typewriterDurationMs(charCounts[i + 1], charMs),
+        typewriterEntryTotalMs(charCounts[i + 1], charMs, true),
       );
       expect(seg.durationMs).toBeGreaterThan(0);
     });
@@ -183,9 +184,10 @@ describe('default 3-slide deck timeline (complaint B/C regression)', () => {
     // default typewriter timed by the incoming slide's length.
     expect(transitions[0].durationMs).toBe(2000);
     expect(transitions[1].durationMs).toBe(
-      typewriterDurationMs(
+      typewriterEntryTotalMs(
         charCounts[2],
         charMsFromCharsPerSec(DEFAULT_PLAYBACK_SETTINGS.typingCharsPerSec),
+        true,
       ),
     );
   });

@@ -35,7 +35,8 @@ describe('typingDurationMs', () => {
 
 describe('buildTimeline', () => {
   it('builds typing -> hold -> transition -> hold for 2 slides', () => {
-    // slide0 code length 20 => typing 2000ms
+    // slide0 code length 20 => 2000ms type + 300ms empty beat (no clear on slide 0)
+    // = 2300ms typewriter intro.
     const timeline = buildTimeline([20, 10], settings);
     expect(timeline.segments.map(s => s.phase)).toEqual([
       'typing',
@@ -43,22 +44,22 @@ describe('buildTimeline', () => {
       'transition',
       'hold',
     ]);
-    // 2000 typing + 1000 hold + 500 transition + 1000 hold
-    expect(timeline.totalDurationMs).toBe(4500);
+    // 2300 typing + 1000 hold + 500 transition + 1000 hold
+    expect(timeline.totalDurationMs).toBe(4800);
     expect(timeline.segments[0]).toMatchObject({
       startMs: 0,
-      durationMs: 2000,
+      durationMs: 2300,
       slideIndex: 0,
     });
-    expect(timeline.segments[1]).toMatchObject({startMs: 2000, durationMs: 1000});
+    expect(timeline.segments[1]).toMatchObject({startMs: 2300, durationMs: 1000});
     expect(timeline.segments[2]).toMatchObject({
-      startMs: 3000,
+      startMs: 3300,
       durationMs: 500,
       phase: 'transition',
       slideIndex: 0,
     });
     expect(timeline.segments[3]).toMatchObject({
-      startMs: 3500,
+      startMs: 3800,
       durationMs: 1000,
       slideIndex: 1,
     });
@@ -77,7 +78,8 @@ describe('buildTimeline', () => {
   it('single slide => a single hold (+ typing if enabled), no transition', () => {
     const one = buildTimeline([20], settings);
     expect(one.segments.map(s => s.phase)).toEqual(['typing', 'hold']);
-    expect(one.totalDurationMs).toBe(3000);
+    // 2000ms type + 300ms empty beat + 1000ms hold.
+    expect(one.totalDurationMs).toBe(3300);
 
     const oneNoType = buildTimeline([20], noTyping);
     expect(oneNoType.segments.map(s => s.phase)).toEqual(['hold']);
@@ -118,14 +120,16 @@ describe('buildTimeline', () => {
       {charCount: 30, entryMode: 'typewriter', transitionMs: 9999},
     ];
     const timeline = buildTimeline(inputs, settings);
-    // 30 chars at 100ms/char (10 cps) => 3000ms, not 9999.
-    expect(timeline.segments[0]).toMatchObject({phase: 'typing', durationMs: 3000});
+    // 30 chars at 100ms/char (10 cps) => 3000ms type + 300ms empty beat = 3300ms
+    // (slide 0, no clear), not 9999.
+    expect(timeline.segments[0]).toMatchObject({phase: 'typing', durationMs: 3300});
   });
 });
 
 describe('stateAt', () => {
   const timeline = buildTimeline([20, 10], settings);
-  // segments: typing[0,2000) hold[2000,3000) transition[3000,3500) hold[3500,4500)
+  // slide 0 typewriter = 2000 type + 300 empty beat = 2300ms (no clear on slide 0).
+  // segments: typing[0,2300) hold[2300,3300) transition[3300,3800) hold[3800,4800)
 
   it('t=0 => typing, progress 0', () => {
     expect(stateAt(timeline, 0)).toMatchObject({
@@ -143,7 +147,8 @@ describe('stateAt', () => {
   });
 
   it('mid-typing progress', () => {
-    expect(stateAt(timeline, 1000)).toMatchObject({
+    // typing spans 2300ms; t=1150 is the midpoint.
+    expect(stateAt(timeline, 1150)).toMatchObject({
       slideIndex: 0,
       phase: 'typing',
       progress: 0.5,
@@ -151,8 +156,8 @@ describe('stateAt', () => {
   });
 
   it('phase boundary belongs to the later segment (progress 0)', () => {
-    // t=2000 is the start of hold, not the end of typing
-    expect(stateAt(timeline, 2000)).toMatchObject({
+    // t=2300 is the start of hold, not the end of typing
+    expect(stateAt(timeline, 2300)).toMatchObject({
       phase: 'hold',
       progress: 0,
       slideIndex: 0,
@@ -160,19 +165,19 @@ describe('stateAt', () => {
   });
 
   it('mid-hold', () => {
-    expect(stateAt(timeline, 2500)).toMatchObject({
+    expect(stateAt(timeline, 2800)).toMatchObject({
       phase: 'hold',
       progress: 0.5,
     });
   });
 
   it('transition boundary + midpoint carry the leaving slide index', () => {
-    expect(stateAt(timeline, 3000)).toMatchObject({
+    expect(stateAt(timeline, 3300)).toMatchObject({
       phase: 'transition',
       progress: 0,
       slideIndex: 0,
     });
-    expect(stateAt(timeline, 3250)).toMatchObject({
+    expect(stateAt(timeline, 3550)).toMatchObject({
       phase: 'transition',
       progress: 0.5,
       slideIndex: 0,
@@ -180,7 +185,7 @@ describe('stateAt', () => {
   });
 
   it('second slide hold', () => {
-    expect(stateAt(timeline, 4000)).toMatchObject({
+    expect(stateAt(timeline, 4300)).toMatchObject({
       phase: 'hold',
       progress: 0.5,
       slideIndex: 1,
@@ -188,7 +193,7 @@ describe('stateAt', () => {
   });
 
   it('t=end clamps to last segment fully complete', () => {
-    expect(stateAt(timeline, 4500)).toMatchObject({
+    expect(stateAt(timeline, 4800)).toMatchObject({
       phase: 'hold',
       progress: 1,
       slideIndex: 1,
@@ -204,7 +209,7 @@ describe('stateAt', () => {
   });
 
   it('is deterministic: same input => same output', () => {
-    for (const t of [0, 500, 2000, 3000, 3250, 4500]) {
+    for (const t of [0, 500, 2300, 3300, 3550, 4800]) {
       expect(stateAt(timeline, t)).toEqual(stateAt(timeline, t));
     }
   });
@@ -253,13 +258,14 @@ describe('buildTimeline (per-slide inputs)', () => {
   ): SlideTimelineInput => ({charCount, entryMode, ...extra});
 
   it('slide 0 typewriter entry sizes by its own char count and per-char timing', () => {
-    // 10 chars/sec => 100ms/char; 8 chars => 800ms typewriter intro.
+    // 10 chars/sec => 100ms/char; 8 chars => 800ms type + 300ms empty beat = 1100ms
+    // typewriter intro (slide 0 has no clear beat).
     const timeline = buildTimeline(
       [input(8, 'typewriter'), input(4, 'morph')],
       settings,
     );
     expect(timeline.segments.map(s => [s.phase, s.mode, s.durationMs])).toEqual([
-      ['typing', 'typewriter', 800],
+      ['typing', 'typewriter', 1100],
       ['hold', 'none', 1000],
       ['transition', 'morph', 500],
       ['hold', 'none', 1000],
@@ -271,10 +277,11 @@ describe('buildTimeline (per-slide inputs)', () => {
       [input(8, 'typewriter', {typewriterCharMs: 25})],
       settings,
     );
-    // 8 chars * 25ms = 200ms, ignoring the 100ms/char global rate.
+    // 8 chars * 25ms = 200ms type + 300ms empty beat = 500ms, ignoring the
+    // 100ms/char global rate.
     expect(timeline.segments[0]).toMatchObject({
       phase: 'typing',
-      durationMs: 200,
+      durationMs: 500,
     });
   });
 
@@ -340,8 +347,9 @@ describe('buildTimeline (per-slide inputs)', () => {
       [input(10, 'typewriter'), input(6, 'fade')],
       settings,
     );
-    // typing[0,1000) hold[1000,2000) transition[2000,2500) hold[2500,3500)
-    expect(stateAt(timeline, 2250)).toMatchObject({
+    // typewriter = 1000 type + 300 empty beat = 1300ms.
+    // typing[0,1300) hold[1300,2300) transition[2300,2800) hold[2800,3800)
+    expect(stateAt(timeline, 2550)).toMatchObject({
       phase: 'transition',
       mode: 'fade',
       slideIndex: 0,

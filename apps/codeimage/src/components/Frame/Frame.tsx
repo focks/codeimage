@@ -13,6 +13,9 @@ import {createVerticalResize} from '@core/hooks/verticalResizable';
 import {
   MAX_FRAME_HEIGHT,
   MIN_FRAME_DRAG_HEIGHT,
+  resolveFrameHeight,
+  resolveFrameMinHeight,
+  resolveFrameWidth,
 } from '@codeimage/store/frame/model';
 import {createResizeObserver} from '@solid-primitives/resize-observer';
 import {assignInlineVars} from '@vanilla-extract/dynamic';
@@ -127,18 +130,33 @@ export const Frame: ParentComponent<FrameProps> = props => {
     return props.autoHeight === false ? (props.height ?? 0) : 0;
   };
 
-  // Enforce the user-set minimum on the resolved size. The container's
-  // `min-width: max-content` / `min-height: 100%` stay intact (content is never
-  // clipped and still grows past the floor), while a length floor is applied
-  // here on `width`/`height`. `max(<length>, <length>)` is valid CSS; the
-  // intrinsic `auto`/`100%` case falls back to the floor as a plain length.
-  const computedWidth = () => {
-    const size = effectiveWidth();
-    const floor = props.minWidth ?? 0;
-    if (size && floor > 0) return `max(${size}px, ${floor}px)`;
-    if (size) return `${size}px`;
-    return floor > 0 ? `${floor}px` : 'auto';
-  };
+  // ---------------------------------------------------------------------------
+  // RENDERED FRAME SIZE — required semantics (must hold in edit, playback, and
+  // export; floors are reactive to the panel values):
+  //
+  //   rendered width  = max(basisW, userMinWidth)
+  //     basisW = explicit width  when auto-width off, else content natural width
+  //   rendered height = max(basisH, userMinHeight)
+  //     basisH = explicit height when auto-height off, else content natural height
+  //
+  // The floor must therefore win when it EXCEEDS the basis, but the CONTENT must
+  // still win when it exceeds the floor (the floor is a minimum, never a cap).
+  //
+  // Width: the basis (or floor) is the `width` value; `min-width: max-content`
+  // keeps content growing past the floor (intrinsic keyword, never clipped). A
+  // floor > 0 with no explicit width is a plain `${floor}px`; with an explicit
+  // width it is `max(<width>px, <floor>px)` — both definite lengths, valid CSS.
+  //
+  // Height: `max(100%, <floor>px)` does NOT work — `100%` resolves against the
+  // ancestor `.handler`, whose height is `auto` (content-driven, centred in the
+  // grid, never stretched), so the percentage collapses and the `max()` never
+  // reaches the floor. The floor is instead applied through `min-height` as a
+  // plain pixel length (see `computedMinHeight`), which natively yields
+  // `max(basisH, floor)` in every mode — content-driven, explicit, and playback
+  // followed — while still letting taller content grow past the floor.
+  // ---------------------------------------------------------------------------
+  const computedWidth = () =>
+    resolveFrameWidth(effectiveWidth(), props.minWidth ?? 0);
 
   // During playback the followed container height is interpolated per frame by
   // AnimationView (so an explicit-height slide follows its height and a transition
@@ -147,18 +165,15 @@ export const Frame: ParentComponent<FrameProps> = props => {
   const playbackHeight = () =>
     playback.isPlaying ? playback.followedHeight : null;
 
-  const computedHeight = () => {
-    const followed = playbackHeight();
-    const floor = props.minHeight ?? 0;
-    // Playback drives an interpolated followed height; still honour the user floor.
-    if (followed != null) {
-      return floor > 0 ? `max(${followed}px, ${floor}px)` : `${followed}px`;
-    }
-    const size = effectiveHeight();
-    if (size && floor > 0) return `max(${size}px, ${floor}px)`;
-    if (size) return `${size}px`;
-    return floor > 0 ? `max(100%, ${floor}px)` : '100%';
-  };
+  // The basis height only — the floor is NOT baked in here (it lives in
+  // `computedMinHeight`). `100%` keeps the box content-driven; an explicit
+  // drag/store/aspect/playback height pins it to a definite pixel size.
+  const computedHeight = () =>
+    resolveFrameHeight(playbackHeight() ?? effectiveHeight());
+
+  // The user height floor, applied as a native `min-height` length so it yields
+  // `max(basisH, floor)` in every mode (see the semantics note above).
+  const computedMinHeight = () => resolveFrameMinHeight(props.minHeight ?? 0);
 
   // The window fills (stretches to) the frame's content box only when an EXPLICIT
   // height is applied — a live vertical drag, the committed store height with
@@ -233,6 +248,7 @@ export const Frame: ParentComponent<FrameProps> = props => {
         style={assignInlineVars({
           [styles.frameVars.width]: computedWidth(),
           [styles.frameVars.height]: computedHeight(),
+          [styles.frameVars.minHeight]: computedMinHeight(),
           [styles.frameVars.padding]: `${props.padding}px`,
           [styles.frameVars.alignItems]: alignItems(),
         })}

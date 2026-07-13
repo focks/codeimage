@@ -10,8 +10,67 @@ import {
   MIN_FRAME_HEIGHT,
   MIN_FRAME_SIZE,
   MIN_FRAME_WIDTH,
+  resolveFrameHeight,
+  resolveFrameMinHeight,
+  resolveFrameWidth,
   type PersistedFrameState,
 } from './model';
+
+// The floor math that regressed: `rendered = max(basis, floor)` with `0` meaning
+// "off" on either side. Width bakes the floor into `width` (content still wins via
+// `min-width: max-content`); height splits it — basis on `height`, floor on
+// `min-height` — because `max(100%, floor)` collapses against the indefinite
+// ancestor and never grows the box.
+describe('resolveFrameWidth', () => {
+  it('is auto when both basis and floor are off (0)', () => {
+    expect(resolveFrameWidth(0, 0)).toBe('auto');
+  });
+
+  it('is the explicit basis when there is no floor', () => {
+    expect(resolveFrameWidth(600, 0)).toBe('600px');
+  });
+
+  it('is the floor alone when auto (basis 0) with a floor set', () => {
+    expect(resolveFrameWidth(0, 900)).toBe('900px');
+  });
+
+  it('is max(basis, floor) when both are set', () => {
+    expect(resolveFrameWidth(400, 900)).toBe('max(400px, 900px)');
+    expect(resolveFrameWidth(1000, 900)).toBe('max(1000px, 900px)');
+  });
+
+  it('treats a negative floor as off', () => {
+    expect(resolveFrameWidth(0, -5)).toBe('auto');
+    expect(resolveFrameWidth(500, -5)).toBe('500px');
+  });
+});
+
+describe('resolveFrameHeight (basis only, floor lives in min-height)', () => {
+  it('is content-driven (100%) with no explicit basis', () => {
+    expect(resolveFrameHeight(0)).toBe('100%');
+  });
+
+  it('pins the explicit/drag/playback basis in px', () => {
+    expect(resolveFrameHeight(300)).toBe('300px');
+    expect(resolveFrameHeight(1080)).toBe('1080px');
+  });
+
+  it('ignores a non-positive basis (stays content-driven)', () => {
+    expect(resolveFrameHeight(-10)).toBe('100%');
+  });
+});
+
+describe('resolveFrameMinHeight', () => {
+  it('is the content-preserving default (100%) when the floor is off', () => {
+    expect(resolveFrameMinHeight(0)).toBe('100%');
+    expect(resolveFrameMinHeight(-1)).toBe('100%');
+  });
+
+  it('is the floor as a plain length so it yields max(basis, floor)', () => {
+    expect(resolveFrameMinHeight(800)).toBe('800px');
+    expect(resolveFrameMinHeight(1080)).toBe('1080px');
+  });
+});
 
 describe('clampFrameMinSize', () => {
   it('returns 0 (off) for the disabled value', () => {

@@ -73,6 +73,48 @@ export const MAX_FRAME_HEIGHT = 1920;
  */
 export const MIN_FRAME_DRAG_HEIGHT = 150;
 
+/**
+ * Resolve the rendered frame WIDTH as a CSS length string, honouring the user
+ * floor. Semantics: `rendered = max(basis, floor)` where `basis` is the explicit
+ * width (px) when auto-width is off, else content-driven. `basis === 0` means
+ * auto/content-driven; `floor === 0` (or negative) means "off".
+ *
+ * The container keeps `min-width: max-content` so content always grows past the
+ * floor. Both the floor and an explicit basis are definite lengths, so a floored
+ * explicit width is a valid `max(<len>, <len>)`; a floored auto width is a plain
+ * `${floor}px` (the intrinsic min-width lets content win when it is wider).
+ */
+export function resolveFrameWidth(basis: number, floor: number): string {
+  const size = basis > 0 ? basis : 0;
+  const min = floor > 0 ? floor : 0;
+  if (size && min) return `max(${size}px, ${min}px)`;
+  if (size) return `${size}px`;
+  return min ? `${min}px` : 'auto';
+}
+
+/**
+ * Resolve the rendered frame HEIGHT basis as a CSS length string — WITHOUT the
+ * floor. `basis > 0` pins a definite pixel height (explicit / drag / playback
+ * followed); otherwise the box stays content-driven (`100%`, which resolves to
+ * content against the indefinite ancestor). The floor is applied separately as a
+ * `min-height` length (see {@link resolveFrameMinHeight}) because a percentage
+ * inside `max(100%, floor)` collapses against that indefinite ancestor and never
+ * reaches the floor.
+ */
+export function resolveFrameHeight(basis: number): string {
+  return basis > 0 ? `${basis}px` : '100%';
+}
+
+/**
+ * Resolve the frame `min-height` CSS length. A user floor (`> 0`) is applied as a
+ * plain pixel length, which natively yields `max(basisH, floor)` in every mode
+ * while still letting taller content grow past it. `0`/off falls back to the
+ * content-preserving default (`100%`).
+ */
+export function resolveFrameMinHeight(floor: number): string {
+  return floor > 0 ? `${floor}px` : '100%';
+}
+
 /** Clamp a requested minimum dimension into the allowed range. */
 export function clampFrameMinSize(value: number, max: number): number {
   if (!Number.isFinite(value)) return MIN_FRAME_SIZE;

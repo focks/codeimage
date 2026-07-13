@@ -5,6 +5,11 @@ import {getRootEditorStore} from '@codeimage/store/editor';
 import {getActiveEditorStore} from '@codeimage/store/editor/activeEditor';
 import {EditorConfigStore} from '@codeimage/store/editor/config.store';
 import {getFrameState} from '@codeimage/store/editor/frame';
+import {
+  resolveFrameHeight,
+  resolveFrameMinHeight,
+  resolveFrameWidth,
+} from '@codeimage/store/frame/model';
 import {getTerminalState} from '@codeimage/store/editor/terminal';
 import {dispatchCopyToClipboard} from '@codeimage/store/effects/onCopyToClipboard';
 import {createRef} from '@core/helpers/create-ref';
@@ -64,6 +69,21 @@ export function PreviewFrame(props: VoidProps<PreviewFrameProps>) {
     });
   });
 
+  // Export sizing MUST match the live frame's rendered size (see Frame.tsx) so a
+  // min-width/min-height floor shows up in the exported canvas. Same pure math
+  // (`resolveFrame*`): width floor on `width` + `min-width: max-content`; height
+  // floor on `min-height` (a `max(100%, floor)` height collapses against the
+  // indefinite ancestor). The basis is the explicit size only when its auto flag
+  // is off; there is no drag/playback here (static export snapshot).
+  const previewWidth = () =>
+    resolveFrameWidth(
+      frame.autoWidth === false ? (frame.width ?? 0) : 0,
+      frame.minWidth ?? 0,
+    );
+  const previewHeight = () =>
+    resolveFrameHeight(frame.autoHeight === false ? (frame.height ?? 0) : 0);
+  const previewMinHeight = () => resolveFrameMinHeight(frame.minHeight ?? 0);
+
   return (
     <PreviewPortal>
       <div
@@ -75,8 +95,9 @@ export function PreviewFrame(props: VoidProps<PreviewFrameProps>) {
           style={assignInlineVars({
             overflow: 'hidden',
             [styles.frameVars.radius]: `${frame.radius}px`,
-            [styles.frameVars.width]: `${frame.width}px`,
-            [styles.frameVars.height]: `${frame.height}px`,
+            [styles.frameVars.width]: previewWidth(),
+            [styles.frameVars.height]: previewHeight(),
+            [styles.frameVars.minHeight]: previewMinHeight(),
             [styles.frameVars.padding]: `${frame.padding}px`,
           })}
         >

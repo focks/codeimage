@@ -32,6 +32,12 @@ export function createPlaybackStore() {
   // layers so gradient/image slide transitions blend instead of snapping (P3).
   const [backgroundLayers, setBackgroundLayers] =
     createSignal<PlaybackBackgroundLayers | null>(null);
+  // Interpolated frame CONTAINER height (px) for the current playback frame, or
+  // `null` to fall back to content-driven sizing. AnimationView publishes this so
+  // a slide with an EXPLICIT height follows that height during playback (window
+  // stretched/clipped like the editor) and a transition eases smoothly between
+  // two slides' followed heights instead of hard-swapping (problem: window jump).
+  const [followedHeight, setFollowedHeight] = createSignal<number | null>(null);
 
   function patchSettings(patch: Partial<PlaybackSettings>): void {
     setSettings(s => ({...s, ...patch}));
@@ -75,6 +81,10 @@ export function createPlaybackStore() {
     get backgroundLayers() {
       return backgroundLayers();
     },
+    get followedHeight() {
+      return followedHeight();
+    },
+    setFollowedHeight,
     setBackgroundLayers,
     setIsPlaying,
     setCurrentTimeMs,

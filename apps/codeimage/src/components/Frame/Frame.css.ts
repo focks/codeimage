@@ -19,6 +19,10 @@ export const [frame, frameVars] = createTheme({
   resizeLineBackgroundColor: '',
   controlOffset: '0px',
   aspectRatio: 'auto',
+  // How the window sits in a taller-than-content frame. `center` (default) keeps
+  // the content-driven / aspect-ratio window vertically centred; `stretch` makes
+  // the window follow an EXPLICIT frame height (fill it, clipping when shorter).
+  alignItems: 'center',
 });
 
 export const wrapper = style([
@@ -105,7 +109,11 @@ export const container = style([
     transition: 'background-color .2s, padding .2s, border-radius .2s',
     display: 'grid',
     flexDirection: 'column',
-    alignItems: 'center',
+    // `stretch` when an explicit height is applied (window follows the frame,
+    // clipping its code when shorter than content); `center` otherwise (content-
+    // driven / aspect-ratio window stays vertically centred). Driven per-render
+    // from Frame.tsx via the `alignItems` var so auto-height is untouched.
+    alignItems: frameVars.alignItems,
     selectors: {
       // During playback the chrome is lerp'd per frame by the playback loop, so
       // the CSS transition must be off — otherwise it adds a 0.2s ease on top of

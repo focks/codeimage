@@ -1,6 +1,13 @@
 import {makeEventListenerStack} from '@solid-primitives/event-listener';
 import type {Accessor} from 'solid-js';
-import {batch, createEffect, createSignal, on, onCleanup, untrack} from 'solid-js';
+import {
+  batch,
+  createEffect,
+  createSignal,
+  on,
+  onCleanup,
+  untrack,
+} from 'solid-js';
 import {createStore} from 'solid-js/store';
 
 /**
@@ -13,6 +20,12 @@ import {createStore} from 'solid-js/store';
  * box away from its vertical centre, matching how the horizontal handles grow the
  * box away from its horizontal centre. The live height is exposed as a signal for
  * the badge/preview and committed to the store via `onCommit` on drag end.
+ *
+ * Unlike width (which clamps to `max-content` so the code never wraps), height is
+ * allowed to shrink BELOW the content's natural height: the window follows the
+ * frame and the code area simply clips at the bottom (overflow hidden). The only
+ * floor is the user's `minHeight` (if set) OR a small sane minimum so the window
+ * header stays visible — never the content height.
  */
 
 interface CreateVerticalResizeReturn {
@@ -25,10 +38,18 @@ interface CreateVerticalResizeReturn {
 }
 
 interface CreateVerticalResizeOptions {
+  /**
+   * Absolute hard minimum in px — the smallest the window is ever allowed to be
+   * (keeps the header visible). The effective floor is `max(this, userMinHeight)`.
+   */
   minHeight: number;
   maxHeight: number;
-  /** The natural (content) height floor — the box never shrinks below its content. */
-  contentHeight: () => number;
+  /**
+   * The user-set minimum window height in px (`0` = off). Raises the floor above
+   * {@link minHeight} but is NOT the content height, so the drag can still shrink
+   * the window below its natural content (the code clips — CLIP-to-frame choice).
+   */
+  userMinHeight: () => number;
   /** Called with the final clamped height when a drag ends. */
   onCommit: (height: number) => void;
 }
@@ -43,6 +64,20 @@ function clamp(value: number, min: number, max: number): number {
   if (value < min) return min;
   if (max > 0 && value > max) return max;
   return value;
+}
+
+/**
+ * The effective height floor for a vertical drag: the larger of the absolute hard
+ * minimum (keeps the header visible) and the user-set minHeight (`0` = off). Pure
+ * so it can be unit-tested independently of the drag machinery. Deliberately does
+ * NOT consider content height — the window is allowed to shrink below its content.
+ */
+export function resolveHeightFloor(
+  hardMin: number,
+  userMinHeight: number,
+): number {
+  const user = Number.isFinite(userMinHeight) ? Math.floor(userMinHeight) : 0;
+  return Math.max(hardMin, user);
 }
 
 export function createVerticalResize(
@@ -73,9 +108,14 @@ export function createVerticalResize(
     // top handle up both enlarge the box (mirrors the horizontal LTR/RTL logic).
     const isTop = state.startY < middle;
     const delta = isTop ? state.startY - y : y - state.startY;
-    // The content's natural height is the hard floor — the window can never crop
-    // its own content, matching how width clamps to `max-content` (CLAMP choice).
-    const floor = Math.max(options.minHeight, Math.floor(options.contentHeight()));
+    // Floor is the user's minHeight (if set), else the sane absolute minimum — NOT
+    // the content height. Dragging up therefore shrinks the window below its
+    // natural content and the code clips at the bottom (CLIP-to-frame choice), the
+    // opposite of width which clamps to `max-content` so the code never wraps.
+    const floor = resolveHeightFloor(
+      options.minHeight,
+      options.userMinHeight(),
+    );
     const next = clamp(state.startHeight + delta, floor, options.maxHeight);
     setState({height: next});
   };

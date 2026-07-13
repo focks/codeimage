@@ -64,6 +64,15 @@ export const MAX_FRAME_WIDTH = 1920;
 export const MIN_FRAME_HEIGHT = 100;
 export const MAX_FRAME_HEIGHT = 1920;
 
+/**
+ * Sane absolute floor for a *drag* height: small enough to shrink the window well
+ * below its content (so the code clips) but large enough to keep the window header
+ * visible. Larger than {@link MIN_FRAME_HEIGHT} (the typed-field floor) on purpose —
+ * a drag should never collapse the window to a sliver, whereas a deliberately typed
+ * value may go as low as the field allows.
+ */
+export const MIN_FRAME_DRAG_HEIGHT = 150;
+
 /** Clamp a requested minimum dimension into the allowed range. */
 export function clampFrameMinSize(value: number, max: number): number {
   if (!Number.isFinite(value)) return MIN_FRAME_SIZE;
@@ -77,7 +86,11 @@ export function clampFrameMinSize(value: number, max: number): number {
  * whole pixel. Non-finite input coerces to `min`. Used for both the drag handles
  * and the numeric panel fields so the two entry points agree.
  */
-export function clampFrameSize(value: number, min: number, max: number): number {
+export function clampFrameSize(
+  value: number,
+  min: number,
+  max: number,
+): number {
   if (!Number.isFinite(value)) return min;
   if (value < min) return min;
   if (value > max) return max;

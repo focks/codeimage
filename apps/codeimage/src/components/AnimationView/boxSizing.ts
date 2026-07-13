@@ -76,3 +76,76 @@ export function resolveSurfaceBox(params: {
     : current;
   return box;
 }
+
+/**
+ * A single slide's height inputs for the FOLLOWED-height calculation (problem:
+ * playback/export must render an explicit-height slide at that height, and morph
+ * smoothly across a transition — not hard-swap the container height at the midpoint).
+ */
+export interface SlideHeightInput {
+  /** `true` => the slide's height is content-driven (auto). */
+  readonly autoHeight: boolean;
+  /** The explicit frame CONTAINER height in px, applied when `autoHeight` is false. */
+  readonly explicitHeight: number;
+}
+
+/**
+ * Resolve one slide's FOLLOWED container height in px, pure:
+ *   - auto slide     => its measured code content box height plus the fixed window
+ *     chrome (`chromeOffset` = frame padding + header + content padding), i.e. the
+ *     natural content-driven container height.
+ *   - explicit slide => its explicit container height verbatim (the followed height).
+ *
+ * Returns `undefined` when an auto slide has not been measured yet (caller then
+ * falls back to content-driven CSS sizing).
+ */
+export function slideContainerHeight(
+  input: SlideHeightInput | undefined,
+  contentBox: BoxSize | undefined,
+  chromeOffset: number,
+): number | undefined {
+  if (!input) return undefined;
+  if (!input.autoHeight && input.explicitHeight > 0)
+    return input.explicitHeight;
+  if (!contentBox) return undefined;
+  return contentBox.height + chromeOffset;
+}
+
+/**
+ * Resolve the FOLLOWED container height for the current playback frame: the active
+ * slide's followed height on a hold/typing frame (stable), or the eased
+ * interpolation from slide i's followed height to slide i+1's during a transition
+ * (smooth morph — no hard swap). Pure so preview and export size the container
+ * identically for a given time. `undefined` means "fall back to content-driven CSS".
+ */
+export function resolveFollowedContainerHeight(params: {
+  readonly slides: readonly (SlideHeightInput | undefined)[];
+  readonly boxes: readonly (BoxSize | undefined)[];
+  readonly chromeOffset: number;
+  readonly slideIndex: number;
+  readonly isTransition: boolean;
+  readonly easedProgress: number;
+}): number | undefined {
+  const {slides, boxes, chromeOffset, slideIndex, isTransition, easedProgress} =
+    params;
+  const current = slides[slideIndex];
+  const next = slides[slideIndex + 1];
+  const fromExplicit = current != null && !current.autoHeight;
+  const toExplicit = isTransition && next != null && !next.autoHeight;
+
+  // When NEITHER relevant slide has an explicit height, return undefined so the
+  // container stays content-driven and hugs the surface — byte-identical to the
+  // prior playback path (no forced height, no dependence on the chrome-offset
+  // formula being pixel-exact). Forcing a height is reserved for the cases that
+  // actually need it: an explicit-height slide, or a transition touching one.
+  if (!fromExplicit && !toExplicit) return undefined;
+
+  const from = slideContainerHeight(current, boxes[slideIndex], chromeOffset);
+  if (!isTransition) return from;
+  const to = slideContainerHeight(next, boxes[slideIndex + 1], chromeOffset);
+  if (from == null && to == null) return undefined;
+  if (from == null) return to;
+  if (to == null) return from;
+  const t = easedProgress <= 0 ? 0 : easedProgress >= 1 ? 1 : easedProgress;
+  return lerp(from, to, t);
+}

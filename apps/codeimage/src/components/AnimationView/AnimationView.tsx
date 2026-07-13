@@ -21,17 +21,25 @@ import type {Slide} from '@codeimage/store/slides/model';
 import {createResizeObserver} from '@solid-primitives/resize-observer';
 import {syncTokenKeys, type KeyedTokensInfo} from 'shiki-magic-move/core';
 import {
+  createEffect,
   createMemo,
   createResource,
   createSignal,
   For,
   Match,
+  onCleanup,
   Show,
   Switch,
 } from 'solid-js';
+import {getExportCanvasStore} from '@codeimage/store/canvas';
 import {activeCustomTheme} from './activeTheme';
 import * as styles from './AnimationView.css';
-import {resolveSurfaceBox, type BoxSize} from './boxSizing';
+import {
+  resolveFollowedContainerHeight,
+  resolveSurfaceBox,
+  type BoxSize,
+  type SlideHeightInput,
+} from './boxSizing';
 import {EDITOR_METRICS, surfacePadding} from './editorMetrics';
 import {
   ensureHighlighter,
@@ -179,7 +187,11 @@ export function AnimationView() {
     if (f.mode === 'typewriter') {
       return {
         charMs: timing.charMs,
-        spec: typewriterSpec(charCount, timing.charMs, f.phase === 'transition'),
+        spec: typewriterSpec(
+          charCount,
+          timing.charMs,
+          f.phase === 'transition',
+        ),
       };
     }
     // fade/slide: same window + type split the timeline uses (windowEntryDurationMs).
@@ -200,7 +212,11 @@ export function AnimationView() {
     setSlideBoxes(prev => {
       const cur = prev[index];
       // Skip sub-pixel jitter to avoid a feedback loop with the resize observer.
-      if (cur && Math.abs(cur.width - box.width) < 0.5 && Math.abs(cur.height - box.height) < 0.5) {
+      if (
+        cur &&
+        Math.abs(cur.width - box.width) < 0.5 &&
+        Math.abs(cur.height - box.height) < 0.5
+      ) {
         return prev;
       }
       const next = [...prev];
@@ -242,6 +258,96 @@ export function AnimationView() {
       easedProgress: easeInOutCubic(progress),
     });
   });
+
+  // ── Followed container height (problem: explicit-height slides + smooth morph) ──
+  //
+  // A slide with an explicit frame height must render at that height during playback
+  // and export (window stretched/clipped exactly like the editor), and a transition
+  // between two slides must EASE between their followed heights instead of hard-
+  // swapping the container height at the midpoint. Both are pure functions of the
+  // two slides' followed heights (see boxSizing.ts) and the eased progress, so
+  // preview and export size the container identically (seek-exact).
+  //
+  // The auto-slide branch needs the fixed window chrome (surface + frame + content
+  // padding and the header) to turn a measured code box into a container height. It
+  // is summed from those structural elements (not container − surface, which would
+  // be wrong when the window is clipped), so it stays correct and deterministic.
+  const exportCanvasStore = getExportCanvasStore();
+  const [chromeOffset, setChromeOffset] = createSignal(0);
+
+  // The fixed window chrome above/below the code surface: frame padding (both
+  // sides) + window header + terminal content padding (both sides). Summed from
+  // the structural elements rather than `container − surface`, so it is correct
+  // even when the window is clipped/stretched (padding + header don't change with
+  // the clip, unlike the container height).
+  const verticalPadding = (el: HTMLElement | null): number => {
+    if (!el) return 0;
+    const cs = getComputedStyle(el);
+    return parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  };
+
+  const measureChromeOffset = () => {
+    const wrapper = exportCanvasStore.get.liveFrameRef;
+    if (!wrapper) return;
+    const container = wrapper.querySelector<HTMLElement>(
+      '[data-testid="frame-container"]',
+    );
+    const surface = wrapper.querySelector<HTMLElement>(
+      '[aria-label="codeimage-playback"]',
+    );
+    if (!container || !surface) return;
+    // The code content area (`.content` in terminal.css) is the surface's grand-
+    // parent (surface -> Box wrapper -> .content). Its padding is part of the
+    // chrome that sits between the container edge and the surface box.
+    const content = surface.closest<HTMLElement>('[class*="terminal_content"]');
+    const header = container.querySelector<HTMLElement>(
+      '[class*="terminal_header"]',
+    );
+    // The measured code box (`slideBoxes`) is the surface's CONTENT box (padding
+    // excluded — the MeasureLayer renders with padding:0). The surface then adds
+    // its own vertical padding on top, so include it here: container height =
+    // contentBox + surface padding + frame padding + header + content padding.
+    const offset =
+      verticalPadding(surface) +
+      verticalPadding(container) +
+      (header?.offsetHeight ?? 0) +
+      verticalPadding(content);
+    if (offset > 0 && Math.abs(offset - chromeOffset()) >= 0.5) {
+      setChromeOffset(offset);
+    }
+  };
+
+  const slideHeightInputs = createMemo<SlideHeightInput[]>(() =>
+    slidesStore.state.slides.map(slide => ({
+      autoHeight: slide.frame.autoHeight ?? true,
+      explicitHeight: slide.frame.height ?? 0,
+    })),
+  );
+
+  const followedContainerHeight = createMemo<number | undefined>(() => {
+    const f = frame();
+    const offset = chromeOffset();
+    // No usable chrome measurement yet -> let the container size to content.
+    if (offset <= 0) return undefined;
+    return resolveFollowedContainerHeight({
+      slides: slideHeightInputs(),
+      boxes: slideBoxes(),
+      chromeOffset: offset,
+      slideIndex: f.slideIndex,
+      isTransition: f.phase === 'transition',
+      easedProgress: easeInOutCubic(f.progress),
+    });
+  });
+
+  // Publish the followed container height to the playback store so the shared Frame
+  // container applies it (and clears it on unmount so the editor path is untouched).
+  // The chrome offset is structural (padding + header), so it can be re-measured on
+  // any frame without the container height feeding back into it.
+  createEffect(() => {
+    measureChromeOffset();
+    playback.setFollowedHeight(followedContainerHeight() ?? null);
+  });
+  onCleanup(() => playback.setFollowedHeight(null));
 
   const textStyle = createMemo(() => ({
     'font-family': fontFamily(),
@@ -287,7 +393,11 @@ export function AnimationView() {
                 />
               )}
             </For>
-            <PhaseRenderer sets={sets} frame={frame()} entry={enteringEntry()} />
+            <PhaseRenderer
+              sets={sets}
+              frame={frame()}
+              entry={enteringEntry()}
+            />
           </>
         )}
       </Show>
@@ -324,7 +434,12 @@ function MeasureLayer(props: {
     },
   );
   return (
-    <pre ref={ref} class={styles.measureLayer} style={style()} aria-hidden={'true'}>
+    <pre
+      ref={ref}
+      class={styles.measureLayer}
+      style={style()}
+      aria-hidden={'true'}
+    >
       <TokenList tokens={tokens()} />
     </pre>
   );
@@ -397,8 +512,15 @@ function EntryRenderer(props: {
   entry: {charMs: number; spec: EntrySpec} | undefined;
 }) {
   return (
-    <Switch fallback={<MorphPhase from={props.from} to={props.to} progress={props.progress} />}>
-      <Match when={props.entry?.spec.kind === 'typewriter' ? props.entry : undefined} keyed>
+    <Switch
+      fallback={
+        <MorphPhase from={props.from} to={props.to} progress={props.progress} />
+      }
+    >
+      <Match
+        when={props.entry?.spec.kind === 'typewriter' ? props.entry : undefined}
+        keyed
+      >
         {entry => (
           <TypewriterPhase
             from={props.from}
@@ -410,7 +532,10 @@ function EntryRenderer(props: {
       </Match>
       {/* fade & slide are the same composite (window-in-empty -> type), differing
           only in HOW the window beat animates: a crossfade vs a line-level slide. */}
-      <Match when={props.entry?.spec.kind === 'window' ? props.entry : undefined} keyed>
+      <Match
+        when={props.entry?.spec.kind === 'window' ? props.entry : undefined}
+        keyed
+      >
         {entry => (
           <WindowEntryPhase
             from={props.from}
@@ -483,7 +608,10 @@ function TypewriterPhase(props: {
   return (
     <Switch>
       <Match when={sub().phase === 'clear'}>
-        <pre class={styles.staticLayer} style={{opacity: String(clearOpacity())}}>
+        <pre
+          class={styles.staticLayer}
+          style={{opacity: String(clearOpacity())}}
+        >
           <TokenList tokens={fullTokens(props.from)} />
         </pre>
       </Match>
@@ -529,10 +657,18 @@ function WindowEntryPhase(props: {
   return (
     <Switch>
       <Match when={sub().phase === 'window' && !props.slide}>
-        <FadeLayers from={props.from} to={emptyTo()} progress={sub().localProgress} />
+        <FadeLayers
+          from={props.from}
+          to={emptyTo()}
+          progress={sub().localProgress}
+        />
       </Match>
       <Match when={sub().phase === 'window' && props.slide}>
-        <SlideLayers from={props.from} to={emptyTo()} progress={sub().localProgress} />
+        <SlideLayers
+          from={props.from}
+          to={emptyTo()}
+          progress={sub().localProgress}
+        />
       </Match>
       <Match when={sub().phase === 'type'}>
         <TypedCode to={props.to} localProgress={sub().localProgress} />
@@ -552,10 +688,16 @@ function FadeLayers(props: {
   );
   return (
     <>
-      <pre class={styles.layer} style={{opacity: String(layers().leaving.opacity)}}>
+      <pre
+        class={styles.layer}
+        style={{opacity: String(layers().leaving.opacity)}}
+      >
         <TokenList tokens={layers().leaving.tokens} />
       </pre>
-      <pre class={styles.layer} style={{opacity: String(layers().entering.opacity)}}>
+      <pre
+        class={styles.layer}
+        style={{opacity: String(layers().entering.opacity)}}
+      >
         <TokenList tokens={layers().entering.tokens} />
       </pre>
       {/* Surface box is sized explicitly from the ghost measurements (boxSizing.ts),
@@ -576,10 +718,14 @@ function SlideLayers(props: {
   return (
     <>
       <div class={styles.slideLineLayer}>
-        <For each={layers().leaving}>{line => <SlideLineRow line={line} />}</For>
+        <For each={layers().leaving}>
+          {line => <SlideLineRow line={line} />}
+        </For>
       </div>
       <div class={styles.slideLineLayer}>
-        <For each={layers().entering}>{line => <SlideLineRow line={line} />}</For>
+        <For each={layers().entering}>
+          {line => <SlideLineRow line={line} />}
+        </For>
       </div>
       {/* Surface box is sized explicitly from the ghost measurements (boxSizing.ts). */}
     </>
@@ -592,7 +738,8 @@ function SlideLineRow(props: {line: RenderLine}) {
       class={styles.slideLine}
       style={{
         transform: `translateX(${(props.line.translateX * 100).toFixed(3)}%)`,
-        opacity: props.line.opacity === 1 ? undefined : String(props.line.opacity),
+        opacity:
+          props.line.opacity === 1 ? undefined : String(props.line.opacity),
       }}
     >
       <TokenList tokens={props.line.tokens} inline />

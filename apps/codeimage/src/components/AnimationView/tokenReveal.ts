@@ -35,6 +35,54 @@ function toRenderToken(
 }
 
 /**
+ * Return a referentially STABLE token list: any token whose visible fields
+ * (`content`/`color`/`opacity`/`fontStyle`/`isNewline`) are unchanged from the
+ * previous call for the same `key` reuses the prior object reference. Solid's
+ * `<For>` reconciles by reference, so feeding it stable references lets it reuse
+ * the existing DOM rows and touch only the rows that actually changed — turning a
+ * typing reveal (which appends ~1 token per frame) from an O(all tokens) re-map
+ * into an O(changed tokens) patch. Pure w.r.t. its inputs: the `cache` map is the
+ * only mutable state and is owned by the caller (one per rendered layer), so the
+ * token-producing functions above stay pure and export stays seek-exact (identical
+ * inputs still yield value-identical output; only object identity is deduplicated).
+ */
+export function stabilizeTokens(
+  tokens: RenderToken[],
+  cache: Map<string, RenderToken>,
+): RenderToken[] {
+  const out: RenderToken[] = new Array(tokens.length);
+  const seen = new Set<string>();
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    // Two tokens can share a key across from/to layers, and a typing prefix can
+    // repeat a key with a shorter content slice; disambiguate by index so the
+    // cache never collapses distinct positions.
+    const id = `${i}:${t.key}`;
+    seen.add(id);
+    const prev = cache.get(id);
+    if (
+      prev &&
+      prev.content === t.content &&
+      prev.color === t.color &&
+      prev.opacity === t.opacity &&
+      prev.fontStyle === t.fontStyle &&
+      prev.isNewline === t.isNewline
+    ) {
+      out[i] = prev;
+    } else {
+      cache.set(id, t);
+      out[i] = t;
+    }
+  }
+  // Evict cache entries that are no longer present so a shrinking list (e.g. a
+  // clear beat) does not leak references.
+  if (cache.size > seen.size) {
+    for (const id of cache.keys()) if (!seen.has(id)) cache.delete(id);
+  }
+  return out;
+}
+
+/**
  * Typing reveal: show the first `n = floor(progress * totalChars)` characters of
  * the code, where `totalChars` counts every character including newlines. Purely
  * a function of progress, so seeking to any time yields the exact same reveal.

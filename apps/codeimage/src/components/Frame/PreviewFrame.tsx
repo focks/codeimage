@@ -11,6 +11,7 @@ import {
   resolveFrameWidth,
 } from '@codeimage/store/frame/model';
 import {getTerminalState} from '@codeimage/store/editor/terminal';
+import {getPlaybackStore} from '@codeimage/store/playback/playbackStore';
 import {dispatchCopyToClipboard} from '@codeimage/store/effects/onCopyToClipboard';
 import {createRef} from '@core/helpers/create-ref';
 import {assignInlineVars} from '@vanilla-extract/dynamic';
@@ -53,6 +54,7 @@ export function PreviewFrame(props: VoidProps<PreviewFrameProps>) {
   const editor = getRootEditorStore();
   const assetsStore = getAssetsStore();
   const exportCanvasStore = getExportCanvasStore();
+  const playback = getPlaybackStore();
 
   const filterHotKey = () =>
     editor.state.options.focused ||
@@ -147,7 +149,16 @@ export function PreviewFrame(props: VoidProps<PreviewFrameProps>) {
             borderType={terminal.borderType}
             themeId={editor.state.options.themeId}
           >
-            <Show when={getActiveEditorStore().editor()}>
+            {/* The hidden export editor hosts a live CodeMirror EditorView used
+                only by the IMAGE export path (video export snapshots the on-canvas
+                Frame via `liveFrameRef`, not this Portal). During playback the
+                per-frame chrome writes (padding/background/terminal) fan out into
+                the frame/terminal stores this Portal reactively reads, forcing
+                CodeMirror to re-measure (anchorNode/visiblePixelRange) every rAF —
+                the single largest playback cost. Unmount it while playing so those
+                measurements stop; image export is disabled during playback anyway,
+                and it re-mounts (re-syncing its doc) the moment playback ends. */}
+            <Show when={!playback.isPlaying && getActiveEditorStore().editor()}>
               <PreviewExportEditor onSetEditorView={setPreviewEditorView} />
             </Show>
           </DynamicTerminal>

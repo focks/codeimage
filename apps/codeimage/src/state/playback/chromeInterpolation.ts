@@ -261,3 +261,65 @@ export function resolveChromeAtTime(
     ),
   };
 }
+
+/** Field-wise equality for a resolved frame's persisted state. */
+function frameEquals(a: PersistedFrameState, b: PersistedFrameState): boolean {
+  return (
+    a.padding === b.padding &&
+    a.radius === b.radius &&
+    a.opacity === b.opacity &&
+    a.minWidth === b.minWidth &&
+    a.minHeight === b.minHeight &&
+    a.autoWidth === b.autoWidth &&
+    a.autoHeight === b.autoHeight &&
+    a.width === b.width &&
+    a.height === b.height &&
+    a.visible === b.visible &&
+    a.background === b.background
+  );
+}
+
+/** Field-wise equality for a resolved terminal's persisted state. */
+function terminalEquals(
+  a: PersistedTerminalState,
+  b: PersistedTerminalState,
+): boolean {
+  return (
+    a.showHeader === b.showHeader &&
+    a.type === b.type &&
+    a.accentVisible === b.accentVisible &&
+    a.shadow === b.shadow &&
+    a.background === b.background &&
+    a.textColor === b.textColor &&
+    a.showWatermark === b.showWatermark &&
+    a.showGlassReflection === b.showGlassReflection &&
+    a.opacity === b.opacity &&
+    a.alternativeTheme === b.alternativeTheme &&
+    a.borderType === b.borderType
+  );
+}
+
+/**
+ * Value equality for two resolved chromes. Used to skip the per-frame store
+ * round-trip when the chrome has not changed since the last applied frame (holds
+ * and the many identical frames of a typing beat resolve to byte-identical chrome).
+ * Pure: it never inspects wall-clock or store identity, so preview and export skip
+ * the exact same redundant writes and the rendered DOM stays seek-exact.
+ */
+export function chromeEquals(
+  a: ResolvedChrome | null,
+  b: ResolvedChrome | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const la = a.backgroundLayers;
+  const lb = b.backgroundLayers;
+  return (
+    frameEquals(a.frame, b.frame) &&
+    terminalEquals(a.terminal, b.terminal) &&
+    la.from === lb.from &&
+    la.fromOpacity === lb.fromOpacity &&
+    la.to === lb.to &&
+    la.toOpacity === lb.toOpacity
+  );
+}

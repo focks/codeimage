@@ -1,4 +1,6 @@
 import {getRootEditorStore} from '@codeimage/store/editor';
+import {getFrameState} from '@codeimage/store/editor/frame';
+import {getTerminalState} from '@codeimage/store/editor/terminal';
 import {activeEditorOf} from '@codeimage/store/playback/playbackController';
 import {getPlaybackStore} from '@codeimage/store/playback/playbackStore';
 import {buildTimelineFromSlides} from '@codeimage/store/playback/playbackController';
@@ -27,6 +29,7 @@ import {
   createSignal,
   For,
   Match,
+  on,
   onCleanup,
   Show,
   Switch,
@@ -54,6 +57,7 @@ import {
   morphLayers,
   revealTypedTokens,
   slideLines,
+  stabilizeTokens,
   type RenderLine,
   type RenderToken,
 } from './tokenReveal';
@@ -286,16 +290,29 @@ export function AnimationView() {
     return parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
   };
 
-  const measureChromeOffset = () => {
+  // Cached chrome elements so a re-measure does not re-run four querySelectors +
+  // a `closest` walk on every call. The refs are stable for the lifetime of a
+  // playback session (the Frame/terminal subtree is not re-created per frame), so
+  // we resolve them once (and re-resolve only if a lookup returns null, e.g. the
+  // very first frames before the subtree is committed).
+  let chromeEls: {
+    container: HTMLElement;
+    surface: HTMLElement;
+    content: HTMLElement | null;
+    header: HTMLElement | null;
+  } | null = null;
+
+  const resolveChromeEls = () => {
+    if (chromeEls) return chromeEls;
     const wrapper = exportCanvasStore.get.liveFrameRef;
-    if (!wrapper) return;
+    if (!wrapper) return null;
     const container = wrapper.querySelector<HTMLElement>(
       '[data-testid="frame-container"]',
     );
     const surface = wrapper.querySelector<HTMLElement>(
       '[aria-label="codeimage-playback"]',
     );
-    if (!container || !surface) return;
+    if (!container || !surface) return null;
     // The code content area (`.content` in terminal.css) is the surface's grand-
     // parent (surface -> Box wrapper -> .content). Its padding is part of the
     // chrome that sits between the container edge and the surface box.
@@ -303,15 +320,22 @@ export function AnimationView() {
     const header = container.querySelector<HTMLElement>(
       '[class*="terminal_header"]',
     );
+    chromeEls = {container, surface, content, header};
+    return chromeEls;
+  };
+
+  const measureChromeOffset = () => {
+    const els = resolveChromeEls();
+    if (!els) return;
     // The measured code box (`slideBoxes`) is the surface's CONTENT box (padding
     // excluded — the MeasureLayer renders with padding:0). The surface then adds
     // its own vertical padding on top, so include it here: container height =
     // contentBox + surface padding + frame padding + header + content padding.
     const offset =
-      verticalPadding(surface) +
-      verticalPadding(container) +
-      (header?.offsetHeight ?? 0) +
-      verticalPadding(content);
+      verticalPadding(els.surface) +
+      verticalPadding(els.container) +
+      (els.header?.offsetHeight ?? 0) +
+      verticalPadding(els.content);
     if (offset > 0 && Math.abs(offset - chromeOffset()) >= 0.5) {
       setChromeOffset(offset);
     }
@@ -339,12 +363,33 @@ export function AnimationView() {
     });
   });
 
+  // Re-measure the chrome offset only when a STRUCTURAL input changes — the frame
+  // padding, the window header presence, or the terminal type (which can change the
+  // header/padding metrics). It is NOT a per-frame quantity, so it must not be tied
+  // to `frame()`/`currentTimeMs`; doing so ran four querySelectors + getComputedStyle
+  // on every rAF (a top playback hot path). The DOM element refs are cached, and the
+  // chrome padding/header genuinely only shift when these inputs do, so measuring on
+  // just these signals stays correct for every frame in between.
+  const frameStore = getFrameState();
+  const terminalStore = getTerminalState();
+  createEffect(
+    on(
+      () => [
+        frameStore.store.padding,
+        terminalStore.state.showHeader,
+        terminalStore.state.type,
+        // Re-measure once the surface first appears (offset starts at 0).
+        chromeOffset() === 0,
+      ],
+      () => measureChromeOffset(),
+    ),
+  );
+
   // Publish the followed container height to the playback store so the shared Frame
   // container applies it (and clears it on unmount so the editor path is untouched).
-  // The chrome offset is structural (padding + header), so it can be re-measured on
-  // any frame without the container height feeding back into it.
+  // This is pure math over the measured offset + progress, so it is cheap to run per
+  // frame — no DOM reads happen here.
   createEffect(() => {
-    measureChromeOffset();
     playback.setFollowedHeight(followedContainerHeight() ?? null);
   });
   onCleanup(() => playback.setFollowedHeight(null));
@@ -787,8 +832,15 @@ function MorphPhase(props: {
 }
 
 function TokenList(props: {tokens: RenderToken[]; inline?: boolean}) {
+  // One stable-reference cache per rendered layer. `<For>` reconciles by object
+  // identity, so returning stable references for unchanged tokens lets it keep the
+  // existing DOM rows and re-render only the tokens that actually changed this
+  // frame (the newly-typed token, the ones whose opacity moved) instead of tearing
+  // down and rebuilding the whole span list every rAF.
+  const cache = new Map<string, RenderToken>();
+  const stableTokens = createMemo(() => stabilizeTokens(props.tokens, cache));
   return (
-    <For each={props.tokens}>
+    <For each={stableTokens()}>
       {token => (
         <Show when={!token.isNewline} fallback={props.inline ? null : <br />}>
           <span

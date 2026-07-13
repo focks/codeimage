@@ -2,7 +2,11 @@ import {getFrameState} from '@codeimage/store/editor/frame';
 import {getTerminalState} from '@codeimage/store/editor/terminal';
 import {getSlidesStore} from '@codeimage/store/slides';
 import type {Slide} from '@codeimage/store/slides/model';
-import {resolveChromeAtTime} from './chromeInterpolation';
+import {
+  chromeEquals,
+  resolveChromeAtTime,
+  type ResolvedChrome,
+} from './chromeInterpolation';
 import {getPlaybackStore} from './playbackStore';
 import {boundaryPreviewWindow} from './previewMath';
 import {resolveSlideInputs} from './slideAnimation';
@@ -87,6 +91,25 @@ export function isPlaybackActive(): boolean {
  * playback-scoped write (playbackMode suppresses persist), so saved slides are
  * untouched.
  */
+// Last chrome pushed into the stores. Holds and the many identical frames of a
+// typing beat resolve to byte-identical chrome, so re-dispatching it every rAF
+// only burns the statebuilder clone + reactive fan-out (a top playback hot path).
+// When the freshly resolved chrome equals this, the store write is skipped — the
+// DOM is already in that exact state, so the rendered output is unchanged. This is
+// a pure value gate (no time/store-identity), so preview and export skip the same
+// redundant writes and every `(timeline, tMs)` still yields identical pixels.
+let lastAppliedChrome: ResolvedChrome | null = null;
+
+/**
+ * Reset the chrome-skip cache. Called at the start of every playback/export run so
+ * a stale value from a previous run (or from the live editor state) can never cause
+ * the first frame's write to be skipped. Exported for the export driver, which also
+ * seeks non-monotonically during its size-probe pass.
+ */
+export function resetChromeCache(): void {
+  lastAppliedChrome = null;
+}
+
 export function applyChromeAtTime(tMs: number, timeline: Timeline): void {
   const slidesStore = getSlidesStore();
   const playback = getPlaybackStore();
@@ -96,6 +119,10 @@ export function applyChromeAtTime(tMs: number, timeline: Timeline): void {
   const slides = slidesStore.state.slides;
   const resolved = resolveChromeAtTime(timeline, tMs, slides);
   if (!resolved) return;
+
+  // Skip the store round-trip when nothing changed since the last applied frame.
+  if (chromeEquals(resolved, lastAppliedChrome)) return;
+  lastAppliedChrome = resolved;
 
   frameStore.setFromPersistedState(resolved.frame);
   terminalStore.setFromPersistedState(resolved.terminal);
@@ -147,6 +174,9 @@ export function startPlayback(options: StartOptions = {}): void {
   slidesStore.setPlaybackMode(true);
   playback.setIsPlaying(true);
   playback.setCurrentTimeMs(startAtMs);
+  // Fresh run: the last-applied chrome belongs to the pre-playback editor state,
+  // so the first frame must always write (never skip against a stale value).
+  resetChromeCache();
 
   const startT = performance.now();
 
@@ -206,6 +236,7 @@ export function previewTransition(
   slidesStore.setPlaybackMode(true);
   playback.setIsPlaying(true);
   playback.setCurrentTimeMs(window.startMs);
+  resetChromeCache();
   applyChromeAtTime(window.startMs, timeline);
 
   const startT = performance.now();
@@ -238,6 +269,9 @@ export function stopPlayback(): void {
   // Clear the crossfade layers so the Frame reverts to its single-background
   // rendering once playback ends.
   playback.setBackgroundLayers(null);
+  // The restore below writes the stores directly (bypassing applyChromeAtTime), so
+  // drop the skip cache — the next run must not skip against this stale value.
+  resetChromeCache();
 
   // Rehydrate the user's pre-playback slide into the live stores, then leave
   // playback mode so normal flush/persist resumes with the restored state.

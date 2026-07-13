@@ -7,6 +7,8 @@ import {
   morphLayers,
   revealTypedTokens,
   slideLines,
+  stabilizeTokens,
+  type RenderToken,
 } from './tokenReveal';
 
 /** Build a minimal KeyedTokensInfo from (content, key) pairs. */
@@ -232,5 +234,73 @@ describe('caretOpacity', () => {
     expect(caretOpacity(0, 40)).toBe(1);
     // First `period` chars are "on"; the next `period` are dim.
     expect(caretOpacity(6 / 40, 40)).toBe(0.25); // 6 chars typed => second half
+  });
+});
+
+describe('stabilizeTokens', () => {
+  const tok = (
+    key: string,
+    content: string,
+    opacity = 1,
+    color = '#fff',
+  ): RenderToken => ({key, content, color, opacity, isNewline: false});
+
+  it('reuses the SAME object reference for unchanged tokens', () => {
+    const cache = new Map<string, RenderToken>();
+    const first = [tok('a', 'const'), tok('b', ' x')];
+    const out1 = stabilizeTokens(first, cache);
+    // A fresh (but value-identical) array next frame.
+    const second = [tok('a', 'const'), tok('b', ' x')];
+    const out2 = stabilizeTokens(second, cache);
+    expect(out2[0]).toBe(out1[0]);
+    expect(out2[1]).toBe(out1[1]);
+  });
+
+  it('returns a NEW reference only for the token whose fields changed', () => {
+    const cache = new Map<string, RenderToken>();
+    const out1 = stabilizeTokens([tok('a', 'const'), tok('b', ' x')], cache);
+    // Only the second token's opacity moves (fade), the first is unchanged.
+    const out2 = stabilizeTokens(
+      [tok('a', 'const'), tok('b', ' x', 0.5)],
+      cache,
+    );
+    expect(out2[0]).toBe(out1[0]); // untouched => stable
+    expect(out2[1]).not.toBe(out1[1]); // opacity changed => new
+    expect(out2[1].opacity).toBe(0.5);
+  });
+
+  it('preserves order, content and length exactly (value-identical output)', () => {
+    const cache = new Map<string, RenderToken>();
+    const input = [tok('a', 'a'), tok('b', 'b'), tok('c', 'c')];
+    const out = stabilizeTokens(input, cache);
+    expect(out.map(t => t.content)).toEqual(['a', 'b', 'c']);
+    expect(out).toHaveLength(3);
+  });
+
+  it('appends one token per frame (typing) reusing all prior references', () => {
+    const cache = new Map<string, RenderToken>();
+    const prefix = [tok('a', 'c'), tok('b', 'o')];
+    const out1 = stabilizeTokens(prefix, cache);
+    const grown = [tok('a', 'c'), tok('b', 'o'), tok('c', 'n')];
+    const out2 = stabilizeTokens(grown, cache);
+    expect(out2[0]).toBe(out1[0]);
+    expect(out2[1]).toBe(out1[1]);
+    expect(out2[2].content).toBe('n');
+  });
+
+  it('evicts entries for a shrinking list so it never leaks references', () => {
+    const cache = new Map<string, RenderToken>();
+    stabilizeTokens([tok('a', 'x'), tok('b', 'y'), tok('c', 'z')], cache);
+    expect(cache.size).toBe(3);
+    stabilizeTokens([tok('a', 'x')], cache);
+    expect(cache.size).toBe(1);
+  });
+
+  it('disambiguates a repeated key at a different index (partial slice)', () => {
+    const cache = new Map<string, RenderToken>();
+    // key "a" appears once with full content, once sliced — must not collapse.
+    const out = stabilizeTokens([tok('a', 'const'), tok('a', 'con')], cache);
+    expect(out[0].content).toBe('const');
+    expect(out[1].content).toBe('con');
   });
 });

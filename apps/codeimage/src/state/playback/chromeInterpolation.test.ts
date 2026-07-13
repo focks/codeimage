@@ -3,6 +3,7 @@ import type {PersistedFrameState} from '@codeimage/store/frame/model';
 import type {PersistedTerminalState} from '@codeimage/store/editor/model';
 import type {Slide} from '../slides/model';
 import {
+  chromeEquals,
   formatColor,
   isFlatColor,
   lerp,
@@ -10,6 +11,7 @@ import {
   parseColor,
   resolveBackgroundLayers,
   resolveChromeAtTime,
+  type ResolvedChrome,
 } from './chromeInterpolation';
 import {buildTimeline, type PlaybackSettings, type Timeline} from './timeline';
 
@@ -266,5 +268,75 @@ describe('resolveChromeAtTime', () => {
   it('returns null for an empty deck', () => {
     const {timeline} = twoSlideTimeline();
     expect(resolveChromeAtTime(timeline, 0, [])).toBeNull();
+  });
+});
+
+describe('chromeEquals', () => {
+  const chrome = (over?: {
+    frame?: Partial<PersistedFrameState>;
+    terminalType?: string;
+    layers?: Partial<ResolvedChrome['backgroundLayers']>;
+  }): ResolvedChrome => ({
+    frame: frame(over?.frame ?? {}),
+    terminal: terminal(over?.terminalType ?? 'macOS'),
+    backgroundLayers: {
+      from: '#000000',
+      fromOpacity: 1,
+      to: null,
+      toOpacity: 0,
+      ...over?.layers,
+    },
+  });
+
+  it('true for two value-identical chromes (hold reuse)', () => {
+    expect(chromeEquals(chrome(), chrome())).toBe(true);
+  });
+
+  it('true for the same reference', () => {
+    const c = chrome();
+    expect(chromeEquals(c, c)).toBe(true);
+  });
+
+  it('false when a frame numeric prop differs (transition tween)', () => {
+    expect(chromeEquals(chrome(), chrome({frame: {padding: 65}}))).toBe(false);
+    expect(chromeEquals(chrome(), chrome({frame: {radius: 9}}))).toBe(false);
+    expect(chromeEquals(chrome(), chrome({frame: {opacity: 99}}))).toBe(false);
+  });
+
+  it('false when the background value differs', () => {
+    expect(
+      chromeEquals(chrome(), chrome({frame: {background: '#010101'}})),
+    ).toBe(false);
+  });
+
+  it('false when a boolean/size frame prop swaps at the midpoint', () => {
+    expect(chromeEquals(chrome(), chrome({frame: {visible: false}}))).toBe(
+      false,
+    );
+    expect(chromeEquals(chrome(), chrome({frame: {autoHeight: false}}))).toBe(
+      false,
+    );
+    expect(chromeEquals(chrome(), chrome({frame: {height: 420}}))).toBe(false);
+  });
+
+  it('false when the terminal window style hard-swaps', () => {
+    expect(chromeEquals(chrome(), chrome({terminalType: 'windows'}))).toBe(
+      false,
+    );
+  });
+
+  it('false when a crossfade layer opacity moves per frame', () => {
+    expect(
+      chromeEquals(chrome(), chrome({layers: {fromOpacity: 0.5}})),
+    ).toBe(false);
+    expect(chromeEquals(chrome(), chrome({layers: {to: '#fff', toOpacity: 0.5}}))).toBe(
+      false,
+    );
+  });
+
+  it('false when only one side is null', () => {
+    expect(chromeEquals(chrome(), null)).toBe(false);
+    expect(chromeEquals(null, chrome())).toBe(false);
+    expect(chromeEquals(null, null)).toBe(true);
   });
 });

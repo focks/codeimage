@@ -23,6 +23,7 @@ import {
   applyChromeAtTime as applySlideChromeAtTime,
   buildTimelineFromSlides,
   activeEditorOf,
+  resetChromeCache,
 } from '../state/playback/playbackController';
 import {getPlaybackStore} from '../state/playback/playbackStore';
 import {stateAt, type Timeline} from '../state/playback/timeline';
@@ -338,6 +339,7 @@ export async function exportVideo(
   slidesStore.setPlaybackMode(true);
   playback.setIsPlaying(true);
   playback.setCurrentTimeMs(0);
+  resetChromeCache();
 
   try {
     await prewarmHighlighter(slidesStore.state.slides);
@@ -356,6 +358,10 @@ export async function exportVideo(
       throw new Error('Could not measure the export frame (empty layout).');
     }
     playback.setCurrentTimeMs(0);
+    // The probe pass above seeked to slide midpoints, so the store now holds the
+    // last probe's chrome. Drop the skip cache so the first captured frame (t=0)
+    // always writes rather than skipping against that stale probe value.
+    resetChromeCache();
 
     if (format === 'gif') {
       return await exportGif(options, size, timeline, playback);
@@ -367,8 +373,10 @@ export async function exportVideo(
     for (const frame of openFrames) frame.close();
     openFrames.clear();
 
-    // Restore the exact pre-export slide + leave playback mode (gotcha 1/5).
+    // Restore the exact pre-export slide + leave playback mode (gotcha 1/5). The
+    // restore writes the stores directly, so drop the skip cache too.
     if (restoreSlide) slidesStore.loadSlideIntoStores(restoreSlide);
+    resetChromeCache();
     playback.setIsPlaying(false);
     slidesStore.setPlaybackMode(false);
     playback.setCurrentTimeMs(0);

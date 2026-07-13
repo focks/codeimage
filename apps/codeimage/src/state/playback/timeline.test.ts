@@ -101,8 +101,10 @@ describe('buildTimeline', () => {
     ]);
   });
 
-  it('per-slide transitionMs overrides the global entry duration', () => {
-    // slide 1 (fade) overrides transitionMs=1200; slide 2 (morph) inherits 500.
+  it('per-slide transitionMs overrides the global window duration', () => {
+    // slide 1 (fade) overrides transitionMs=1200 (the WINDOW beat) + types its 10
+    // chars at 100ms/char (1000ms) => 2200ms composite; slide 2 (morph) inherits the
+    // plain 500ms transition (morph has no typing beat).
     const inputs: SlideTimelineInput[] = [
       {charCount: 10, entryMode: 'none'},
       {charCount: 10, entryMode: 'fade', transitionMs: 1200},
@@ -110,8 +112,35 @@ describe('buildTimeline', () => {
     ];
     const timeline = buildTimeline(inputs, noTyping);
     const transitions = timeline.segments.filter(s => s.phase === 'transition');
-    expect(transitions[0].durationMs).toBe(1200); // per-slide override
-    expect(transitions[1].durationMs).toBe(500); // inherited global
+    expect(transitions[0].durationMs).toBe(2200); // 1200 window + 1000 type
+    expect(transitions[1].durationMs).toBe(500); // morph: inherited global, no type
+  });
+
+  it('fade/slide entry duration = windowMs + typeMs (composite)', () => {
+    // Empty slide 0 (none), then a fade and a slide, each 10 chars at 100ms/char.
+    // Global transitionMs=500 is the window beat; +1000ms typing => 1500ms each.
+    const inputs: SlideTimelineInput[] = [
+      {charCount: 10, entryMode: 'none'},
+      {charCount: 10, entryMode: 'fade'},
+      {charCount: 10, entryMode: 'slide'},
+    ];
+    const timeline = buildTimeline(inputs, noTyping);
+    const transitions = timeline.segments.filter(s => s.phase === 'transition');
+    expect(transitions.map(s => [s.mode, s.durationMs])).toEqual([
+      ['fade', 1500], // 500 window + 1000 type
+      ['slide', 1500],
+    ]);
+  });
+
+  it('a fade/slide entry with no code collapses to 0 (skip empty intro)', () => {
+    // Zero-char incoming slide has no typing beat, so the whole composite entry
+    // collapses to 0 and contributes no segment — same skip rule as typewriter.
+    const inputs: SlideTimelineInput[] = [
+      {charCount: 10, entryMode: 'none'},
+      {charCount: 0, entryMode: 'fade'},
+    ];
+    const timeline = buildTimeline(inputs, noTyping);
+    expect(timeline.segments.map(s => s.phase)).toEqual(['hold', 'hold']);
   });
 
   it('per-slide transitionMs is ignored for typewriter/none entries', () => {

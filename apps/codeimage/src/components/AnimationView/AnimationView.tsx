@@ -10,9 +10,12 @@ import {
 } from '@codeimage/store/playback/timeline';
 import {resolveSlideInputs} from '@codeimage/store/playback/slideAnimation';
 import {
-  typewriterSizingSettleAt,
-  typewriterSubPhaseAt,
-} from '@codeimage/store/playback/typewriterPhases';
+  entrySizingSettleAt,
+  entrySubPhaseAt,
+  typewriterSpec,
+  windowSpec,
+  type EntrySpec,
+} from '@codeimage/store/playback/entryPhases';
 import {getSlidesStore} from '@codeimage/store/slides';
 import type {Slide} from '@codeimage/store/slides/model';
 import {createResizeObserver} from '@solid-primitives/resize-observer';
@@ -124,34 +127,65 @@ export function AnimationView() {
     return stateAt(timeline, playback.currentTimeMs);
   });
 
-  // Resolved ms-per-char for every slide's typewriter entry (per-slide override, else
-  // the global rate). Drives the sub-phase split (clear/empty/type) and the box
-  // settle point so the renderer and sizing agree with the timeline's durations.
-  const slideCharMs = createMemo<number[]>(() => {
-    const slides = slidesStore.state.slides;
-    const inputs = resolveSlideInputs(
-      slides,
-      slides.map(() => 0),
-      playback.settings,
-    );
-    return inputs.map(input => resolveTypewriterCharMs(input, playback.settings));
-  });
+  // Resolved per-slide entry timing, mirroring timeline.ts so the renderer, the box
+  // settle, and the timeline durations all agree:
+  //   charMs   — ms-per-char for the type beat (per-slide override, else global rate).
+  //   windowMs — fade/slide window beat (per-slide transitionMs override, else global).
+  const slideEntryTiming = createMemo<{charMs: number; windowMs: number}[]>(
+    () => {
+      const slides = slidesStore.state.slides;
+      const settings = playback.settings;
+      const inputs = resolveSlideInputs(
+        slides,
+        slides.map(() => 0),
+        settings,
+      );
+      return inputs.map(input => {
+        const windowMs =
+          input.transitionMs != null && input.transitionMs > 0
+            ? input.transitionMs
+            : settings.transitionMs;
+        return {
+          charMs: resolveTypewriterCharMs(input, settings),
+          windowMs: Math.max(0, windowMs),
+        };
+      });
+    },
+  );
 
-  // The slide ENTERING at the current frame (the one whose code the entry reveals):
-  // slide 0 on a `typing` frame, or slide i+1 on a `transition` into it. Its char
-  // count + resolved charMs size the sub-phase beats; `hasOutgoing` (a transition,
-  // i.e. there IS previous text) gates the leading `clear` beat.
-  const enteringTypewriter = createMemo(() => {
+  // The composite ENTRY in effect for the current frame, as a unified `EntrySpec`
+  // (see entryPhases.ts): typewriter => {clear?, empty, type}; fade/slide =>
+  // {window, type}. Only the typing-capable modes have a spec; morph/none do not.
+  //
+  // The entering slide (whose code the entry reveals) is slide i+1 on a `transition`
+  // into it, or slide 0 on a `typing` frame. Its char count + resolved charMs size
+  // the type beat and the box settle; `hasOutgoing` (a transition — there IS previous
+  // text) gates the typewriter `clear` beat. The window duration for fade/slide is
+  // this frame's segment duration MINUS the type beat, so the box settle lines up
+  // with the timeline's own windowMs + typeMs split.
+  const enteringEntry = createMemo<
+    {charMs: number; spec: EntrySpec} | undefined
+  >(() => {
     const f = frame();
-    if (f.mode !== 'typewriter') return undefined;
+    if (f.mode !== 'typewriter' && f.mode !== 'fade' && f.mode !== 'slide') {
+      return undefined;
+    }
     const sets = syncedSets();
     const index = f.phase === 'transition' ? f.slideIndex + 1 : f.slideIndex;
     const set = sets?.[index];
     if (!set) return undefined;
+    const charCount = set.code.length;
+    const timing = slideEntryTiming()[index] ?? {charMs: 0, windowMs: 0};
+    if (f.mode === 'typewriter') {
+      return {
+        charMs: timing.charMs,
+        spec: typewriterSpec(charCount, timing.charMs, f.phase === 'transition'),
+      };
+    }
+    // fade/slide: same window + type split the timeline uses (windowEntryDurationMs).
     return {
-      charCount: set.code.length,
-      charMs: slideCharMs()[index] ?? 0,
-      hasOutgoing: f.phase === 'transition',
+      charMs: timing.charMs,
+      spec: windowSpec(timing.windowMs, charCount, timing.charMs),
     };
   });
 
@@ -188,21 +222,17 @@ export function AnimationView() {
   // as the single source of truth for the floor (editor-identical semantics).
   const surfaceBox = createMemo<BoxSize | undefined>(() => {
     const f = frame();
-    // Typewriter transitions morph the window from the outgoing slide's box to the
-    // incoming slide's FULL box during clear+empty, then hold it FIXED while the text
-    // types in (a stable window — same intent as the ghost-sizing fix). We do this by
-    // rescaling the linear entry progress so it reaches 1 at the type-beat start
-    // (`settleAt`) and clamps there; non-typewriter transitions keep whole-segment
-    // interpolation. Slide 0's `typing` frame is not a transition, so its window sits
-    // at its own full box from t=0 (no morph) — exactly the desired behaviour.
-    const tw = enteringTypewriter();
+    // Composite entries (typewriter AND fade/slide) morph the window from the
+    // outgoing slide's box to the incoming slide's FULL box during their leading
+    // beats (clear+empty, or the fade/slide window), then hold it FIXED while the
+    // text types in — a stable window. We rescale the linear entry progress so it
+    // reaches 1 at the type-beat start (`entrySizingSettleAt`) and clamps there;
+    // morph transitions keep whole-segment interpolation. Slide 0's `typing` frame
+    // is not a transition, so its window sits at its own full box from t=0 (no morph).
+    const entry = enteringEntry();
     let progress = f.progress;
-    if (f.phase === 'transition' && tw) {
-      const settleAt = typewriterSizingSettleAt(
-        tw.charCount,
-        tw.charMs,
-        tw.hasOutgoing,
-      );
+    if (f.phase === 'transition' && entry) {
+      const settleAt = entrySizingSettleAt(entry.spec);
       progress = settleAt > 0 ? Math.min(1, f.progress / settleAt) : 1;
     }
     return resolveSurfaceBox({
@@ -257,11 +287,7 @@ export function AnimationView() {
                 />
               )}
             </For>
-            <PhaseRenderer
-              sets={sets}
-              frame={frame()}
-              typewriterCharMs={enteringTypewriter()?.charMs ?? 0}
-            />
+            <PhaseRenderer sets={sets} frame={frame()} entry={enteringEntry()} />
           </>
         )}
       </Show>
@@ -307,8 +333,11 @@ function MeasureLayer(props: {
 interface PhaseRendererProps {
   sets: KeyedTokensInfo[];
   frame: ReturnType<typeof stateAt>;
-  /** Resolved ms-per-char of the entering typewriter slide (0 for non-typewriter). */
-  typewriterCharMs: number;
+  /**
+   * The unified entry spec + resolved ms-per-char for the current composite entry
+   * (typewriter / fade / slide). `undefined` for morph/none/hold frames.
+   */
+  entry: {charMs: number; spec: EntrySpec} | undefined;
 }
 
 /**
@@ -333,8 +362,7 @@ function PhaseRenderer(props: PhaseRendererProps) {
               to={set}
               mode={props.frame.mode}
               progress={props.frame.progress}
-              charMs={props.typewriterCharMs}
-              hasOutgoing={false}
+              entry={props.entry}
             />
           </Match>
           {/* Change from the leaving slide into the entering (next) slide. */}
@@ -345,8 +373,7 @@ function PhaseRenderer(props: PhaseRendererProps) {
                 to={next}
                 mode={props.frame.mode}
                 progress={props.frame.progress}
-                charMs={props.typewriterCharMs}
-                hasOutgoing={true}
+                entry={props.entry}
               />
             )}
           </Match>
@@ -356,33 +383,43 @@ function PhaseRenderer(props: PhaseRendererProps) {
   );
 }
 
-/** Route an entry animation to its pure renderer based on the resolved mode. */
+/**
+ * Route an entry animation to its pure renderer based on the resolved mode. The
+ * composite modes (typewriter / fade / slide) share the unified `entry.spec` from
+ * `entryPhases.ts`; morph has no spec and cross-dissolves text directly.
+ */
 function EntryRenderer(props: {
   from: KeyedTokensInfo;
   to: KeyedTokensInfo;
   mode: EntryMode;
   progress: number;
-  /** ms-per-char of the entering typewriter slide (sizes the clear/empty/type beats). */
-  charMs: number;
-  /** True on a transition (there IS outgoing text): enables the leading clear beat. */
-  hasOutgoing: boolean;
+  /** Unified entry spec + ms-per-char for the composite modes (undefined for morph). */
+  entry: {charMs: number; spec: EntrySpec} | undefined;
 }) {
   return (
     <Switch fallback={<MorphPhase from={props.from} to={props.to} progress={props.progress} />}>
-      <Match when={props.mode === 'typewriter'}>
-        <TypewriterPhase
-          from={props.from}
-          to={props.to}
-          progress={props.progress}
-          charMs={props.charMs}
-          hasOutgoing={props.hasOutgoing}
-        />
+      <Match when={props.entry?.spec.kind === 'typewriter' ? props.entry : undefined} keyed>
+        {entry => (
+          <TypewriterPhase
+            from={props.from}
+            to={props.to}
+            progress={props.progress}
+            spec={entry.spec}
+          />
+        )}
       </Match>
-      <Match when={props.mode === 'fade'}>
-        <FadePhase from={props.from} to={props.to} progress={props.progress} />
-      </Match>
-      <Match when={props.mode === 'slide'}>
-        <SlidePhase from={props.from} to={props.to} progress={props.progress} />
+      {/* fade & slide are the same composite (window-in-empty -> type), differing
+          only in HOW the window beat animates: a crossfade vs a line-level slide. */}
+      <Match when={props.entry?.spec.kind === 'window' ? props.entry : undefined} keyed>
+        {entry => (
+          <WindowEntryPhase
+            from={props.from}
+            to={props.to}
+            progress={props.progress}
+            spec={entry.spec}
+            slide={props.mode === 'slide'}
+          />
+        )}
       </Match>
     </Switch>
   );
@@ -402,43 +439,46 @@ function StaticPhase(props: {
 }
 
 /**
- * Typewriter entry, split into three beats so every slide begins from a clean,
- * empty editor before its code types in one character at a time (see
- * `typewriterPhases.ts`):
+ * The `type` beat, shared by every composite entry: the incoming code reveals one
+ * character at a time (linear) with a blinking caret. `localProgress` is the beat-
+ * local reveal progress (0 at the empty editor, 1 at fully typed) — pure, so preview
+ * and export stay seek-exact.
+ */
+function TypedCode(props: {to: KeyedTokensInfo; localProgress: number}) {
+  const typedTokens = createMemo<RenderToken[]>(() =>
+    revealTypedTokens(props.to, props.localProgress),
+  );
+  const caretAlpha = createMemo(() =>
+    caretOpacity(props.localProgress, props.to.code.length),
+  );
+  return (
+    <pre class={styles.staticLayer}>
+      <TokenList tokens={typedTokens()} />
+      <span class={styles.caret} style={{opacity: String(caretAlpha())}} />
+    </pre>
+  );
+}
+
+/**
+ * Typewriter entry: three beats so every slide begins from a clean, empty editor
+ * before its code types in one character at a time (see `entryPhases.ts`):
  *
  *   clear (slides i>0 only) => the OUTGOING code fades out quickly (eased).
  *   empty                   => nothing but the blinking caret — a clean empty beat.
  *   type                    => the incoming code reveals char-by-char (linear) + caret.
  *
  * The active beat and its local progress are a pure function of the linear entry
- * `progress` (via `typewriterSubPhaseAt`), so preview and export stay seek-exact.
+ * `progress` (via `entrySubPhaseAt`), so preview and export stay seek-exact.
  */
 function TypewriterPhase(props: {
   from: KeyedTokensInfo;
   to: KeyedTokensInfo;
   progress: number;
-  charMs: number;
-  hasOutgoing: boolean;
+  spec: EntrySpec;
 }) {
-  const sub = createMemo(() =>
-    typewriterSubPhaseAt(
-      props.progress,
-      props.to.code.length,
-      props.charMs,
-      props.hasOutgoing,
-    ),
-  );
-
+  const sub = createMemo(() => entrySubPhaseAt(props.progress, props.spec));
   // clear: outgoing tokens fading out (eased), no caret yet.
   const clearOpacity = createMemo(() => 1 - easeOutCubic(sub().localProgress));
-  // type: chars revealed linearly by the beat-local progress.
-  const typedTokens = createMemo<RenderToken[]>(() =>
-    revealTypedTokens(props.to, sub().localProgress),
-  );
-  // Caret blink derived from the beat-local type progress (pure — seek-exact).
-  const caretAlpha = createMemo(() =>
-    caretOpacity(sub().localProgress, props.to.code.length),
-  );
 
   return (
     <Switch>
@@ -454,17 +494,55 @@ function TypewriterPhase(props: {
         </pre>
       </Match>
       <Match when={sub().phase === 'type'}>
-        <pre class={styles.staticLayer}>
-          <TokenList tokens={typedTokens()} />
-          <span class={styles.caret} style={{opacity: String(caretAlpha())}} />
-        </pre>
+        <TypedCode to={props.to} localProgress={sub().localProgress} />
       </Match>
     </Switch>
   );
 }
 
-/** Whole-block crossfade (no token movement). */
-function FadePhase(props: {
+/**
+ * Composite fade/slide entry (see `entryPhases.ts`): the outgoing code leaves while
+ * the EMPTY editor arrives over the `window` beat, then the incoming code types in
+ * over the `type` beat — the requirement that every fade/slide slide passes through
+ * an empty-editor moment before typing.
+ *
+ *   window => `from` text fades/slides OUT and the empty editor fades/slides IN (the
+ *             `to` layer of the window animation is EMPTY, not the final code, so no
+ *             text is ever shown fully-formed before typing). On slide 0 there is no
+ *             `from`, so the empty window simply fades/slides in from the canvas.
+ *   type   => the caret appears and the code reveals char-by-char (shared `TypedCode`).
+ *
+ * `slide` picks the animation for the window beat: `false` => fade (crossfade),
+ * `true` => slide (line-level LCS slide). Both are pure functions of `progress`.
+ */
+function WindowEntryPhase(props: {
+  from: KeyedTokensInfo;
+  to: KeyedTokensInfo;
+  progress: number;
+  spec: EntrySpec;
+  slide: boolean;
+}) {
+  const sub = createMemo(() => entrySubPhaseAt(props.progress, props.spec));
+  // The window animation brings in an EMPTY editor, never the final text.
+  const emptyTo = createMemo(() => emptyTokens(props.to));
+
+  return (
+    <Switch>
+      <Match when={sub().phase === 'window' && !props.slide}>
+        <FadeLayers from={props.from} to={emptyTo()} progress={sub().localProgress} />
+      </Match>
+      <Match when={sub().phase === 'window' && props.slide}>
+        <SlideLayers from={props.from} to={emptyTo()} progress={sub().localProgress} />
+      </Match>
+      <Match when={sub().phase === 'type'}>
+        <TypedCode to={props.to} localProgress={sub().localProgress} />
+      </Match>
+    </Switch>
+  );
+}
+
+/** Whole-block crossfade (no token movement) between two token sets. */
+function FadeLayers(props: {
   from: KeyedTokensInfo;
   to: KeyedTokensInfo;
   progress: number;
@@ -487,7 +565,7 @@ function FadePhase(props: {
 }
 
 /** Line-level slide: removed lines slide out left, added lines slide in right. */
-function SlidePhase(props: {
+function SlideLayers(props: {
   from: KeyedTokensInfo;
   to: KeyedTokensInfo;
   progress: number;

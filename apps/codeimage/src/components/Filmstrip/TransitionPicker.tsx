@@ -185,7 +185,12 @@ export function TransitionPicker(props: TransitionPickerProps) {
             when={resolvedMode() === 'typewriter'}
             fallback={
               <Show when={resolvedMode() !== 'none'}>
-                <div class={styles.sectionLabel}>Duration</div>
+                {/* Fade/slide compose a window beat (this slider) + code typing, so
+                    the slider controls only the WINDOW phase for those modes; morph
+                    is a single transition, so it stays plain "Duration". */}
+                <div class={styles.sectionLabel}>
+                  {resolvedMode() === 'morph' ? 'Duration' : 'Window duration'}
+                </div>
                 <div class={styles.fieldRow}>
                   <input
                     type={'range'}

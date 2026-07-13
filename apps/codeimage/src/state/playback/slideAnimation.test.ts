@@ -7,6 +7,7 @@ import {
   type PlaybackSettings,
 } from './timeline';
 import {typewriterEntryTotalMs} from './typewriterPhases';
+import {entryTotalMs, windowSpec} from './entryPhases';
 
 const base: PlaybackSettings = {
   typingIntro: true,
@@ -168,11 +169,15 @@ describe('default 3-slide deck timeline (complaint B/C regression)', () => {
 
   it('honours a per-slide transitionMs override on an otherwise-default deck', () => {
     // The transition picker writes ms into slides[i].transitionMs; the timeline
-    // must use it for that boundary. transitionMs only applies to non-typewriter
-    // modes (typewriter is timed per character), so the overridden slide gets an
-    // explicit fade while the untouched boundary keeps the typewriter default.
+    // must use it as the WINDOW beat of that boundary's composite fade entry. A fade
+    // now composes windowMs (the override) + the char-typing beat, so the overridden
+    // slide gets a 2000ms empty-window fade THEN types its 30 chars in; the untouched
+    // boundary keeps the typewriter default.
     const slides = [{}, {transitionIn: 'fade' as const, transitionMs: 2000}, {}];
     const charCounts = [180, 30, 690];
+    const charMs = charMsFromCharsPerSec(
+      DEFAULT_PLAYBACK_SETTINGS.typingCharsPerSec,
+    );
     const inputs = resolveSlideInputs(
       slides,
       charCounts,
@@ -180,15 +185,14 @@ describe('default 3-slide deck timeline (complaint B/C regression)', () => {
     );
     const timeline = buildTimeline(inputs, DEFAULT_PLAYBACK_SETTINGS);
     const transitions = timeline.segments.filter(s => s.phase === 'transition');
-    // Boundary into slide 1 uses the override (2000ms fade); into slide 2 the
-    // default typewriter timed by the incoming slide's length.
-    expect(transitions[0].durationMs).toBe(2000);
+    // Boundary into slide 1 uses the override as the window beat (2000ms) + typing
+    // beat for slide 1's 30 chars; into slide 2 the default typewriter timed by the
+    // incoming slide's length.
+    expect(transitions[0].durationMs).toBe(
+      entryTotalMs(windowSpec(2000, charCounts[1], charMs)),
+    );
     expect(transitions[1].durationMs).toBe(
-      typewriterEntryTotalMs(
-        charCounts[2],
-        charMsFromCharsPerSec(DEFAULT_PLAYBACK_SETTINGS.typingCharsPerSec),
-        true,
-      ),
+      typewriterEntryTotalMs(charCounts[2], charMs, true),
     );
   });
 });

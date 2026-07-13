@@ -29,13 +29,13 @@ export const TRANSITION_META: Readonly<Record<EntryMode, TransitionMeta>> = {
     mode: 'fade',
     label: 'Fade',
     Icon: TransitionFadeIcon,
-    hint: 'Cross-dissolve the whole block into the next slide.',
+    hint: 'Empty window fades in, then the code types itself.',
   },
   slide: {
     mode: 'slide',
     label: 'Slide',
     Icon: TransitionSlideIcon,
-    hint: 'Changed lines slide in from the right.',
+    hint: 'Empty window slides in from the right, then the code types.',
   },
   morph: {
     mode: 'morph',

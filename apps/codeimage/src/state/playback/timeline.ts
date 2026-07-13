@@ -7,6 +7,7 @@
  * wall-clock reads in this module — `stateAt` is a pure function of `(timeline, tMs)`.
  */
 
+import {entryTotalMs, windowSpec} from './entryPhases';
 import {typewriterEntryTotalMs} from './typewriterPhases';
 
 export interface PlaybackSettings {
@@ -148,6 +149,38 @@ function typewriterEntryDurationMs(
   return typewriterEntryTotalMs(slide.charCount, charMs, hasOutgoing);
 }
 
+/**
+ * Resolved WINDOW duration for a fade/slide entry: the per-slide `transitionMs`
+ * override when set, else the global `transitionMs`. This is the out+in beat that
+ * brings the EMPTY editor in; the char-typing beat is added on top separately.
+ */
+function resolveWindowMs(
+  slide: SlideTimelineInput,
+  settings: PlaybackSettings,
+): number {
+  const value =
+    slide.transitionMs != null && slide.transitionMs > 0
+      ? slide.transitionMs
+      : settings.transitionMs;
+  return Math.max(0, value);
+}
+
+/**
+ * Duration of a fade/slide COMPOSITE entry: the window beat (empty editor fades /
+ * slides in) followed by the char-typing beat, sized by the SAME char resolution
+ * as a typewriter (per-slide `typewriterCharMs`, else the global chars-per-second).
+ * A slide with no code to type collapses to 0 (nothing to animate).
+ */
+function windowEntryDurationMs(
+  slide: SlideTimelineInput,
+  settings: PlaybackSettings,
+): number {
+  const charMs = resolveTypewriterCharMs(slide, settings);
+  return entryTotalMs(
+    windowSpec(resolveWindowMs(slide, settings), slide.charCount, charMs),
+  );
+}
+
 /** Resolved hold duration for a slide: per-slide override, else global. */
 function holdDurationMs(
   slide: SlideTimelineInput,
@@ -159,9 +192,12 @@ function holdDurationMs(
 
 /**
  * Duration of a slide's entry segment given its resolved mode:
- *   - `typewriter` => clear? + empty + charCount × per-char timing (the beats)
- *   - `none`       => 0 (hard cut, no segment)
- *   - fade/slide/morph => global transition duration
+ *   - `typewriter`  => clear? + empty + charCount × per-char timing (the beats)
+ *   - `fade`/`slide`=> windowMs + charCount × per-char timing (COMPOSITE: the empty
+ *                      editor fades/slides in over the window beat, then code types)
+ *   - `morph`       => plain transition duration (text-level morph is its whole
+ *                      point — there is no typing after it, so no window+type split)
+ *   - `none`        => 0 (hard cut, the explicit "no animation" escape hatch)
  *
  * `hasOutgoing` gates the typewriter `clear` beat (slide 0's intro has no outgoing
  * text so it skips the clear); it is ignored by the other modes.
@@ -176,13 +212,13 @@ function entryDurationMs(
       return 0;
     case 'typewriter':
       return typewriterEntryDurationMs(slide, settings, hasOutgoing);
+    case 'fade':
+    case 'slide':
+      return windowEntryDurationMs(slide, settings);
     default: {
-      // Prefer the per-slide entry-duration override; else the global default.
-      const value =
-        slide.transitionMs != null && slide.transitionMs > 0
-          ? slide.transitionMs
-          : settings.transitionMs;
-      return Math.max(0, value);
+      // morph: plain transition duration (per-slide override, else global). No
+      // typing follows a morph, so it is NOT a window+type composite.
+      return resolveWindowMs(slide, settings);
     }
   }
 }

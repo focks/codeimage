@@ -4,7 +4,7 @@ import {
   PREVIEW_PAD_MS,
   slideEntryStartMs,
 } from './previewMath';
-import {buildTimeline, type PlaybackSettings} from './timeline';
+import {buildTimeline, stateAt, type PlaybackSettings} from './timeline';
 
 const settings: PlaybackSettings = {
   typingIntro: true,
@@ -44,6 +44,60 @@ describe('slideEntryStartMs', () => {
     );
     // hold0[0,1000) hold1[1000,2000)
     expect(slideEntryStartMs(cut, 1)).toBe(1000);
+  });
+
+  // ── Present-from-here must land ON the entry segment, never mid-hold ──────
+  // Regression guard for the "play presents from the active slide" behaviour: the
+  // start time must sit at the entering slide's ENTRY (typing/transition) so its
+  // animation plays, NOT in its hold (which would show the finished code at once).
+
+  it('single-slide deck: present-from-slide-0 starts at the typing entry (t=0)', () => {
+    // With typingIntro on, slide 0's ONLY entry is a typewriter starting at 0.
+    // If this ever returned the hold start instead, the typing would be skipped.
+    const one = buildTimeline([10], settings); // typing[0,1000) hold[1000,2000)
+    const start = slideEntryStartMs(one, 0);
+    expect(start).toBe(0);
+    // The frame at that start time is the typing entry at progress 0 — i.e. the
+    // animation is about to play, not a static hold showing the whole slide.
+    const frame = stateAt(one, start);
+    expect(frame.phase).toBe('typing');
+    expect(frame.mode).toBe('typewriter');
+    expect(frame.progress).toBe(0);
+  });
+
+  it('present-from-here lands on the entering slide entry for every slide', () => {
+    // typing0[0,1000) transition0->1[1000,1500) hold1[1500,2500)
+    //   transition1->2[2500,3000) hold2[3000,4000)
+    const three = buildTimeline([10, 10, 10], settings);
+    // Slide 0 => its typing entry.
+    expect(stateAt(three, slideEntryStartMs(three, 0)).phase).toBe('typing');
+    // Slides 1 and 2 => their transition (entry) segment, at progress 0.
+    for (const i of [1, 2]) {
+      const frame = stateAt(three, slideEntryStartMs(three, i));
+      expect(frame.phase).toBe('transition');
+      expect(frame.progress).toBe(0);
+      // The transition carries the LEAVING index (i-1), the entry into slide i.
+      expect(frame.slideIndex).toBe(i - 1);
+    }
+  });
+
+  it('a mid-deck typewriter entry still starts at its entry, not its hold', () => {
+    // Slide 1 explicitly types in (an i>0 typewriter entry is tagged `transition`).
+    // typing0[0,1000) hold0[1000,2000) transition(type)0->1[2000,3000) hold1[3000,4000)
+    const typed = buildTimeline(
+      [
+        {charCount: 10, entryMode: 'typewriter'},
+        {charCount: 10, entryMode: 'typewriter'},
+      ],
+      settings,
+    );
+    const start = slideEntryStartMs(typed, 1);
+    // The transition (entry into slide 1) begins after slide 0's typing + hold.
+    expect(start).toBe(2000);
+    const frame = stateAt(typed, start);
+    expect(frame.phase).toBe('transition');
+    expect(frame.mode).toBe('typewriter'); // the entry animation, not the hold
+    expect(frame.progress).toBe(0);
   });
 });
 

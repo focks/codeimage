@@ -44,6 +44,33 @@ describe('resolveEntryMode', () => {
       resolveEntryMode('morph', true, {...base, typingIntro: true}),
     ).toBe('morph');
   });
+
+  // ── Aged-profile fallback: settings saved by an OLDER build have no
+  //    `defaultTransition` key. Readers must fall back to DEFAULT_TRANSITION
+  //    (typewriter) so those decks still type instead of hard-cutting. ─────────
+  it('aged profile without defaultTransition falls back to typewriter', () => {
+    // Mirrors an IDB record from before the key existed.
+    const aged = {
+      typingIntro: true,
+      typingCharsPerSec: 30,
+      holdMs: 2500,
+      transitionMs: 800,
+    } as PlaybackSettings; // defaultTransition intentionally absent
+    // Slide 0 still types (governed by typingIntro, not the default).
+    expect(resolveEntryMode(undefined, true, aged)).toBe('typewriter');
+    // A non-first inheriting slide falls back to the DEFAULT_TRANSITION.
+    expect(resolveEntryMode(undefined, false, aged)).toBe('typewriter');
+  });
+
+  it("typingIntro types slide 0 even when the stored default is 'morph'", () => {
+    // The whole job of the intro toggle: independent of defaultTransition, an
+    // inheriting slide 0 types when typingIntro is on. Slides 2+ still morph.
+    const morphStored = {...base, defaultTransition: 'morph' as const};
+    expect(resolveEntryMode(undefined, true, morphStored)).toBe('typewriter');
+    expect(resolveEntryMode('inherit', true, morphStored)).toBe('typewriter');
+    // Non-first inheriting slide respects the user's stored choice.
+    expect(resolveEntryMode(undefined, false, morphStored)).toBe('morph');
+  });
 });
 
 describe('resolveSlideInputs', () => {
@@ -123,6 +150,19 @@ describe('default 3-slide deck timeline (complaint B/C regression)', () => {
       );
       expect(seg.durationMs).toBeGreaterThan(0);
     });
+  });
+
+  it('single slide + typewriter default + typingIntro on => a typing entry', () => {
+    // The single-slide case the bug report calls out: one slide, defaults, intro
+    // on. The timeline must open with a non-zero `typing` segment so Play types
+    // the code in rather than showing it all at once.
+    const inputs = resolveSlideInputs([{}], [120], DEFAULT_PLAYBACK_SETTINGS);
+    expect(inputs[0].entryMode).toBe('typewriter');
+    const timeline = buildTimeline(inputs, DEFAULT_PLAYBACK_SETTINGS);
+    expect(timeline.segments[0].phase).toBe('typing');
+    expect(timeline.segments[0].mode).toBe('typewriter');
+    expect(timeline.segments[0].startMs).toBe(0);
+    expect(timeline.segments[0].durationMs).toBeGreaterThan(0);
   });
 
   it('honours a per-slide transitionMs override on an otherwise-default deck', () => {

@@ -1,7 +1,7 @@
 import {getSlidesStore} from '@codeimage/store/slides';
 import {Tooltip} from '@codeui/kit';
 import clsx from 'clsx';
-import {createEffect, For, on} from 'solid-js';
+import {createEffect, For, on, Show} from 'solid-js';
 import {PlusIcon} from '../Icons/PlusIcon';
 import {DurationChip} from './DurationChip';
 import {DuplicateIcon, TrashIcon} from './FilmstripIcons';
@@ -85,11 +85,18 @@ export function Filmstrip() {
               {/*
                 Transition chip in the gap BEFORE this card. Chip `index()` edits
                 slide `index()`'s incoming transition — the intro (index 0) or the
-                transition INTO this slide from the previous one.
+                transition INTO this slide from the previous one. Hidden entirely on
+                a single-slide deck: with one slide the lone "intro" chip is noise
+                (there is nothing to transition between), and the typing intro stays
+                reachable from the Presentation panel toggle. With N>=2 slides this
+                renders the intro chip (index 0) plus one chip per gap (indices
+                1..N-1) — N chips total, one per boundary.
               */}
-              <div class={chipStyles.chipSlot}>
-                <TransitionPicker boundaryIndex={index()} />
-              </div>
+              <Show when={!isSingleSlide()}>
+                <div class={chipStyles.chipSlot}>
+                  <TransitionPicker boundaryIndex={index()} />
+                </div>
+              </Show>
 
               <button
                 ref={el => (cardRefs[index()] = el)}

@@ -106,6 +106,15 @@ export const container = style([
     display: 'grid',
     flexDirection: 'column',
     alignItems: 'center',
+    selectors: {
+      // During playback the chrome is lerp'd per frame by the playback loop, so
+      // the CSS transition must be off — otherwise it adds a 0.2s ease on top of
+      // the per-frame values and preview would diverge from the (transition-less)
+      // export path. Seek-exactness requires both paths render identically (P3).
+      '&[data-playback="true"]': {
+        transition: 'none',
+      },
+    },
   },
 ]);
 
@@ -123,6 +132,19 @@ export const overlay = style({
 });
 
 export const previewOverlay = style([overlay, {borderRadius: 0}]);
+
+// Crossfade layers painted during playback when a slide transition changes the
+// frame background and either side is a gradient/image (can't channel-lerp). Two
+// stacked layers cross-dissolve by opacity, driven per-frame from the playback
+// store, so gradient/image transitions blend instead of snapping (P3). Flat→flat
+// transitions skip these and lerp the single `backgroundColor` var directly.
+export const backgroundLayer = style({
+  position: 'absolute',
+  inset: 0,
+  height: '100%',
+  width: '100%',
+  borderRadius: 'inherit',
+});
 
 export const dragControls = style({
   position: 'absolute',

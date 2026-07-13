@@ -4,6 +4,7 @@ import {AssetsImage} from '@codeimage/store/assets/AssetsImage';
 import {getExportCanvasStore} from '@codeimage/store/canvas';
 import {getRootEditorStore} from '@codeimage/store/editor';
 import {dispatchUpdateTheme} from '@codeimage/store/effects/onThemeChange';
+import {getPlaybackStore} from '@codeimage/store/playback/playbackStore';
 import {Box, FadeInOutTransition} from '@codeimage/ui';
 import {exportExclude as _exportExclude} from '@core/directives/exportExclude';
 import {useModality} from '@core/hooks/isMobile';
@@ -46,6 +47,17 @@ export const Frame: ParentComponent<FrameProps> = props => {
 
   const assetsStore = getAssetsStore();
   const exportCanvasStore = getExportCanvasStore();
+  const playback = getPlaybackStore();
+
+  // During a playback transition where a gradient/image background crossfades,
+  // the resolver publishes two stacked layers (`from`/`to`) with per-frame
+  // opacities. Only used when `to` is present; flat→flat lerps `props.background`
+  // directly and this stays null (P3).
+  const crossfade = () => {
+    const layers = playback.backgroundLayers;
+    if (!playback.isPlaying || !layers || layers.to == null) return null;
+    return layers;
+  };
 
   // The live, on-canvas frame wrapper — the subtree that hosts AnimationView
   // during playback. Registered so video export can snapshot it (image export
@@ -123,6 +135,7 @@ export const Frame: ParentComponent<FrameProps> = props => {
       <div
         ref={setRef}
         class={styles.container}
+        data-playback={playback.isPlaying ? 'true' : undefined}
         style={assignInlineVars({
           [styles.frameVars.width]: computedWidth(),
           [styles.frameVars.height]: computedHeight(),
@@ -161,6 +174,26 @@ export const Frame: ParentComponent<FrameProps> = props => {
                 }}
                 assetId={assetId()}
               />
+            )}
+          </Show>
+          <Show when={crossfade()}>
+            {layers => (
+              <>
+                <div
+                  class={styles.backgroundLayer}
+                  style={{
+                    background: layers().from ?? 'transparent',
+                    opacity: String(layers().fromOpacity),
+                  }}
+                />
+                <div
+                  class={styles.backgroundLayer}
+                  style={{
+                    background: layers().to ?? 'transparent',
+                    opacity: String(layers().toOpacity),
+                  }}
+                />
+              </>
             )}
           </Show>
         </div>

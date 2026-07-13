@@ -17,7 +17,10 @@
 
 import download from 'downloadjs';
 import {
-  applySlideChromeAtTime,
+  // Interpolating chrome resolver (P3): smoothly tweens padding/radius/opacity +
+  // background across slide boundaries instead of snapping. Aliased so the export
+  // frame loop keeps its existing call shape.
+  applyChromeAtTime as applySlideChromeAtTime,
   buildTimelineFromSlides,
   activeEditorOf,
 } from '../state/playback/playbackController';
@@ -26,8 +29,8 @@ import {stateAt, type Timeline} from '../state/playback/timeline';
 import {getSlidesStore} from '../state/slides';
 import type {Slide} from '../state/slides/model';
 import {ensureHighlighter, shikiThemeFor} from '../components/AnimationView/shikiHighlighter';
+import {activeCustomTheme} from '../components/AnimationView/activeTheme';
 import {getFrameState} from '../state/editor/frame';
-import {getUiStore} from '../state/ui';
 import {
   compositeCentered,
   createFrameCapturer,
@@ -100,10 +103,9 @@ function nextFrame(): Promise<void> {
 
 /** Pre-warm shiki for every slide's language + the active theme (gotcha 3). */
 async function prewarmHighlighter(slides: readonly Slide[]): Promise<void> {
-  const ui = getUiStore();
-  const theme = shikiThemeFor(ui.currentTheme() === 'dark');
+  const theme = activeCustomTheme();
   const langs = slides.map(s => activeEditorOf(s).languageId);
-  await ensureHighlighter(langs, [theme]);
+  await ensureHighlighter(langs, theme ? [shikiThemeFor(theme)] : []);
 }
 
 /** Measure the node's current rendered CSS box (unrounded, pre-pixelRatio). */

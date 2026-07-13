@@ -1,5 +1,8 @@
+import {getFrameState} from '@codeimage/store/editor/frame';
+import {getTerminalState} from '@codeimage/store/editor/terminal';
 import {getSlidesStore} from '@codeimage/store/slides';
 import type {Slide} from '@codeimage/store/slides/model';
+import {resolveChromeAtTime} from './chromeInterpolation';
 import {getPlaybackStore} from './playbackStore';
 import {resolveSlideInputs} from './slideAnimation';
 import {buildTimeline, slideCodeLength, stateAt, type Timeline} from './timeline';
@@ -60,9 +63,37 @@ export function isPlaybackActive(): boolean {
 }
 
 /**
- * Push the chrome (frame + terminal window styling) of the slide active at `tMs`
- * into the live stores. Exported so phase 3 can call it before each snapshot to
- * put the chrome in the correct state for the frame it is about to capture.
+ * Push the interpolated chrome (frame + terminal styling + background paint) for
+ * injected time `tMs` into the live stores. Supersedes the old boundary-hydration
+ * approach: during a transition segment padding/radius/opacity are lerp'd and the
+ * background crossfades/lerps per frame, so preview and export both progress
+ * smoothly across a slide boundary instead of snapping (problem P3). Seek-exact —
+ * identical `(timeline, tMs)` always applies identical chrome.
+ *
+ * The editor payload (code/tabs/language) is NOT touched here; it is driven by the
+ * AnimationView token pipeline. This only writes the window chrome, which is a
+ * playback-scoped write (playbackMode suppresses persist), so saved slides are
+ * untouched.
+ */
+export function applyChromeAtTime(tMs: number, timeline: Timeline): void {
+  const slidesStore = getSlidesStore();
+  const playback = getPlaybackStore();
+  const frameStore = getFrameState();
+  const terminalStore = getTerminalState();
+
+  const slides = slidesStore.state.slides;
+  const resolved = resolveChromeAtTime(timeline, tMs, slides);
+  if (!resolved) return;
+
+  frameStore.setFromPersistedState(resolved.frame);
+  terminalStore.setFromPersistedState(resolved.terminal);
+  playback.setBackgroundLayers(resolved.backgroundLayers);
+}
+
+/**
+ * Backwards-compatible boundary hydration (no interpolation). Retained only for
+ * callers/tests that expect a hard slide swap; new code should use
+ * {@link applyChromeAtTime}, which supersedes this for smooth transitions.
  */
 export function applySlideChromeAtTime(tMs: number, timeline: Timeline): void {
   const slidesStore = getSlidesStore();
@@ -95,25 +126,19 @@ export function startPlayback(options: StartOptions = {}): void {
 
   const timeline = buildTimelineFromSlides();
   const startT = performance.now();
-  let appliedChromeIndex = -1;
 
-  // Apply the current slide's chrome (frame + terminal styling) to the live
-  // stores so the window chrome animates via its existing CSS transitions. This
-  // is a playback-scoped write: playbackMode suppresses flush/persist so saved
-  // slides are untouched. Chrome snaps at slide boundaries (acceptable for v1;
-  // only the code morph + typing are guaranteed seek-exact per the design).
-  applySlideChromeAtTime(0, timeline);
-  appliedChromeIndex = stateAt(timeline, 0).slideIndex;
+  // Apply the interpolated chrome EVERY frame so padding/radius/opacity and the
+  // background progress smoothly across slide boundaries (problem P3). This is a
+  // playback-scoped write: playbackMode suppresses flush/persist so saved slides
+  // are untouched. Preview and export now share `applyChromeAtTime`, so both
+  // paths render the identical, seek-exact chrome for a given time.
+  applyChromeAtTime(0, timeline);
 
   const tick = (now: number): void => {
     const t = now - startT;
     playback.setCurrentTimeMs(t);
 
-    const idx = stateAt(timeline, t).slideIndex;
-    if (idx !== appliedChromeIndex) {
-      applySlideChromeAtTime(t, timeline);
-      appliedChromeIndex = idx;
-    }
+    applyChromeAtTime(t, timeline);
 
     options.onFrame?.(t);
 
@@ -138,6 +163,9 @@ export function stopPlayback(): void {
   const playback = getPlaybackStore();
 
   playback.setIsPlaying(false);
+  // Clear the crossfade layers so the Frame reverts to its single-background
+  // rendering once playback ends.
+  playback.setBackgroundLayers(null);
 
   // Rehydrate the user's pre-playback slide into the live stores, then leave
   // playback mode so normal flush/persist resumes with the restored state.

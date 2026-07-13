@@ -7,6 +7,10 @@ import {
   type PersistedPlaybackSettings,
 } from './model';
 import type {EntryMode, PlaybackSettings} from './timeline';
+import type {ResolvedChrome} from './chromeInterpolation';
+
+/** Background paint for the frame during playback (crossfade layers). */
+export type PlaybackBackgroundLayers = ResolvedChrome['backgroundLayers'];
 
 /**
  * Global playback settings + live playback state.
@@ -23,6 +27,11 @@ export function createPlaybackStore() {
   );
   const [isPlaying, setIsPlaying] = createSignal(false);
   const [currentTimeMs, setCurrentTimeMs] = createSignal(0);
+  // Frame background paint for the current playback frame. When null the Frame
+  // renders its normal single background; when set, it paints the crossfade
+  // layers so gradient/image slide transitions blend instead of snapping (P3).
+  const [backgroundLayers, setBackgroundLayers] =
+    createSignal<PlaybackBackgroundLayers | null>(null);
 
   function patchSettings(patch: Partial<PlaybackSettings>): void {
     setSettings(s => ({...s, ...patch}));
@@ -63,6 +72,10 @@ export function createPlaybackStore() {
     get currentTimeMs() {
       return currentTimeMs();
     },
+    get backgroundLayers() {
+      return backgroundLayers();
+    },
+    setBackgroundLayers,
     setIsPlaying,
     setCurrentTimeMs,
     actions: {

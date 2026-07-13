@@ -1,5 +1,4 @@
 import {getRootEditorStore} from '@codeimage/store/editor';
-import {getUiStore} from '@codeimage/store/ui';
 import {activeEditorOf} from '@codeimage/store/playback/playbackController';
 import {getPlaybackStore} from '@codeimage/store/playback/playbackStore';
 import {buildTimelineFromSlides} from '@codeimage/store/playback/playbackController';
@@ -8,11 +7,14 @@ import {getSlidesStore} from '@codeimage/store/slides';
 import type {Slide} from '@codeimage/store/slides/model';
 import {syncTokenKeys, type KeyedTokensInfo} from 'shiki-magic-move/core';
 import {createMemo, createResource, For, Match, Show, Switch} from 'solid-js';
+import {activeCustomTheme} from './activeTheme';
 import * as styles from './AnimationView.css';
+import {EDITOR_METRICS, surfacePadding} from './editorMetrics';
 import {
   ensureHighlighter,
   keyedTokensFor,
   shikiThemeFor,
+  shikiThemeNameFor,
 } from './shikiHighlighter';
 import {
   fadeLayers,
@@ -52,9 +54,11 @@ export function AnimationView() {
   const slidesStore = getSlidesStore();
   const playback = getPlaybackStore();
   const editor = getRootEditorStore();
-  const ui = getUiStore();
 
-  const theme = createMemo(() => shikiThemeFor(ui.currentTheme() === 'dark'));
+  // The active codeimage theme drives a runtime-built shiki theme so playback
+  // colors match the editor (problem P2). Tracked reactively so switching themes
+  // regenerates the highlight.
+  const customTheme = createMemo(() => activeCustomTheme());
 
   const fontFamily = createMemo(() => {
     const font = editor.computed.selectedFont();
@@ -66,14 +70,17 @@ export function AnimationView() {
   const [tokenSets] = createResource(
     () => ({
       slides: slidesStore.state.slides,
-      theme: theme(),
+      theme: customTheme(),
     }),
     async ({slides, theme}): Promise<KeyedTokensInfo[]> => {
+      if (!theme) return [];
+      const shikiTheme = shikiThemeFor(theme);
+      const themeName = shikiThemeNameFor(theme);
       const langs = slides.map(s => activeEditorOf(s).languageId);
-      const highlighter = await ensureHighlighter(langs, [theme]);
+      const highlighter = await ensureHighlighter(langs, [shikiTheme]);
       return slides.map((slide: Slide) => {
         const {code, languageId} = activeEditorOf(slide);
-        return keyedTokensFor(highlighter, code, languageId, theme);
+        return keyedTokensFor(highlighter, code, languageId, themeName);
       });
     },
   );
@@ -102,8 +109,13 @@ export function AnimationView() {
       style={{
         'font-family': fontFamily(),
         'font-weight': String(fontWeight()),
-        'font-size': '16px',
-        'line-height': '1.5',
+        // Mirror the live editor's exact box so the CanvasEditor -> AnimationView
+        // swap on Play does not shift the code block (problem P1). Values are the
+        // rendered `.cm-content` / `.cm-line` metrics (see editorMetrics.ts).
+        'font-size': `${EDITOR_METRICS.fontSizePx}px`,
+        'line-height': String(EDITOR_METRICS.lineHeight),
+        'tab-size': String(EDITOR_METRICS.tabSize),
+        padding: surfacePadding(),
       }}
       aria-label={'codeimage-playback'}
     >
@@ -287,7 +299,7 @@ function MorphPhase(props: {
   );
 
   const layerTransform = (translateYLines: number) =>
-    `translateY(${(translateYLines * 1.5).toFixed(3)}em)`;
+    `translateY(${(translateYLines * EDITOR_METRICS.lineHeight).toFixed(3)}em)`;
 
   return (
     <>

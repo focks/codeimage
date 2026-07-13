@@ -1,6 +1,7 @@
 import {describe, expect, it} from 'vitest';
+import {DEFAULT_PLAYBACK_SETTINGS} from './model';
 import {resolveEntryMode, resolveSlideInputs} from './slideAnimation';
-import type {PlaybackSettings} from './timeline';
+import {buildTimeline, type PlaybackSettings} from './timeline';
 
 const base: PlaybackSettings = {
   typingIntro: true,
@@ -76,5 +77,55 @@ describe('resolveSlideInputs', () => {
   it('missing code lengths default to 0', () => {
     const inputs = resolveSlideInputs([{}], [], base);
     expect(inputs[0].charCount).toBe(0);
+  });
+});
+
+describe('default 3-slide deck timeline (complaint B/C regression)', () => {
+  // A fresh deck has no per-slide overrides at all (transitionIn/transitionMs
+  // undefined). This guards the user's core expectation: with untouched defaults
+  // every slide boundary plays a visible, non-zero morph transition — not a
+  // zero-duration hard cut. Uses the SHIPPED defaults, not a fixture, so a
+  // regression in DEFAULT_PLAYBACK_SETTINGS (e.g. losing defaultTransition or
+  // transitionMs) is caught here.
+  it('produces a non-zero morph transition on every boundary with untouched defaults', () => {
+    const plainSlides = [{}, {}, {}]; // three slides, no overrides
+    const inputs = resolveSlideInputs(
+      plainSlides,
+      [180, 30, 690],
+      DEFAULT_PLAYBACK_SETTINGS,
+    );
+
+    // Slide 0 inherits typingIntro (on) => typewriter; slides 1..2 => default morph.
+    expect(inputs.map(i => i.entryMode)).toEqual([
+      'typewriter',
+      'morph',
+      'morph',
+    ]);
+
+    const timeline = buildTimeline(inputs, DEFAULT_PLAYBACK_SETTINGS);
+    const transitions = timeline.segments.filter(s => s.phase === 'transition');
+    // Two boundaries (1->2 and 2->3), each an 800ms morph — never 0/undefined.
+    expect(transitions).toHaveLength(2);
+    for (const seg of transitions) {
+      expect(seg.mode).toBe('morph');
+      expect(seg.durationMs).toBe(DEFAULT_PLAYBACK_SETTINGS.transitionMs);
+      expect(seg.durationMs).toBeGreaterThan(0);
+    }
+  });
+
+  it('honours a per-slide transitionMs override on an otherwise-default deck', () => {
+    // The transition picker writes ms into slides[i].transitionMs; the timeline
+    // must use it for that boundary and the global default for the others.
+    const slides = [{}, {transitionMs: 2000}, {}];
+    const inputs = resolveSlideInputs(
+      slides,
+      [180, 30, 690],
+      DEFAULT_PLAYBACK_SETTINGS,
+    );
+    const timeline = buildTimeline(inputs, DEFAULT_PLAYBACK_SETTINGS);
+    const transitions = timeline.segments.filter(s => s.phase === 'transition');
+    // Boundary into slide 1 uses the override (2000ms); into slide 2 the default.
+    expect(transitions[0].durationMs).toBe(2000);
+    expect(transitions[1].durationMs).toBe(DEFAULT_PLAYBACK_SETTINGS.transitionMs);
   });
 });

@@ -2,13 +2,24 @@ import {getRootEditorStore} from '@codeimage/store/editor';
 import {activeEditorOf} from '@codeimage/store/playback/playbackController';
 import {getPlaybackStore} from '@codeimage/store/playback/playbackStore';
 import {buildTimelineFromSlides} from '@codeimage/store/playback/playbackController';
+import {easeInOutCubic} from '@codeimage/store/playback/easing';
 import {stateAt, type EntryMode} from '@codeimage/store/playback/timeline';
 import {getSlidesStore} from '@codeimage/store/slides';
 import type {Slide} from '@codeimage/store/slides/model';
+import {createResizeObserver} from '@solid-primitives/resize-observer';
 import {syncTokenKeys, type KeyedTokensInfo} from 'shiki-magic-move/core';
-import {createMemo, createResource, For, Match, Show, Switch} from 'solid-js';
+import {
+  createMemo,
+  createResource,
+  createSignal,
+  For,
+  Match,
+  Show,
+  Switch,
+} from 'solid-js';
 import {activeCustomTheme} from './activeTheme';
 import * as styles from './AnimationView.css';
+import {resolveSurfaceBox, type BoxSize} from './boxSizing';
 import {EDITOR_METRICS, surfacePadding} from './editorMetrics';
 import {
   ensureHighlighter,
@@ -104,26 +115,131 @@ export function AnimationView() {
     return stateAt(timeline, playback.currentTimeMs);
   });
 
+  // Ghost-measured full-content box of every slide. Recomputed only when a slide's
+  // rendered layout changes (code/theme/font), NOT per animation frame — so a
+  // transition can lerp between two STABLE sizes purely from progress. Measuring
+  // the full final code (not the revealed prefix) is what keeps the window from
+  // growing while the typewriter reveals text (problem A).
+  const [slideBoxes, setSlideBoxes] = createSignal<(BoxSize | undefined)[]>([]);
+
+  const setBoxAt = (index: number, box: BoxSize) => {
+    setSlideBoxes(prev => {
+      const cur = prev[index];
+      // Skip sub-pixel jitter to avoid a feedback loop with the resize observer.
+      if (cur && Math.abs(cur.width - box.width) < 0.5 && Math.abs(cur.height - box.height) < 0.5) {
+        return prev;
+      }
+      const next = [...prev];
+      next[index] = box;
+      return next;
+    });
+  };
+
+  // The explicit surface box for the current frame: the active slide's full box on
+  // a hold/typing frame (constant -> no growth, problem A), or the eased
+  // interpolation from slide i to slide i+1 during a transition (smooth size morph,
+  // problem B).
+  //
+  // The user's min-width/height floor is intentionally NOT applied here: the shared
+  // Frame `.container` already floors the WINDOW via `max(width, floor)` on the
+  // playback path exactly as it does for the live editor, and the container hugs
+  // this surface via `min-width: max-content`. Flooring the surface too would stack
+  // the floor + chrome and overshoot the requested minimum, so the container is left
+  // as the single source of truth for the floor (editor-identical semantics).
+  const surfaceBox = createMemo<BoxSize | undefined>(() => {
+    const f = frame();
+    return resolveSurfaceBox({
+      boxes: slideBoxes(),
+      slideIndex: f.slideIndex,
+      isTransition: f.phase === 'transition',
+      easedProgress: easeInOutCubic(f.progress),
+    });
+  });
+
+  const textStyle = createMemo(() => ({
+    'font-family': fontFamily(),
+    'font-weight': String(fontWeight()),
+    // Mirror the live editor's exact box so the CanvasEditor -> AnimationView swap
+    // on Play does not shift the code block (problem P1). Values are the rendered
+    // `.cm-content` / `.cm-line` metrics (see editorMetrics.ts).
+    'font-size': `${EDITOR_METRICS.fontSizePx}px`,
+    'line-height': String(EDITOR_METRICS.lineHeight),
+    'tab-size': String(EDITOR_METRICS.tabSize),
+    padding: surfacePadding(),
+  }));
+
   return (
     <div
       class={styles.surface}
       style={{
-        'font-family': fontFamily(),
-        'font-weight': String(fontWeight()),
-        // Mirror the live editor's exact box so the CanvasEditor -> AnimationView
-        // swap on Play does not shift the code block (problem P1). Values are the
-        // rendered `.cm-content` / `.cm-line` metrics (see editorMetrics.ts).
-        'font-size': `${EDITOR_METRICS.fontSizePx}px`,
-        'line-height': String(EDITOR_METRICS.lineHeight),
-        'tab-size': String(EDITOR_METRICS.tabSize),
-        padding: surfacePadding(),
+        ...textStyle(),
+        // Explicit box from the ghost measurements. `content-box` because the
+        // measured box already excludes padding; the surface adds its own padding
+        // on top, mirroring the editor's padded content box.
+        'box-sizing': 'content-box',
+        ...(surfaceBox()
+          ? {
+              width: `${surfaceBox()!.width}px`,
+              height: `${surfaceBox()!.height}px`,
+            }
+          : {}),
       }}
       aria-label={'codeimage-playback'}
     >
       <Show when={syncedSets()} keyed>
-        {sets => <PhaseRenderer sets={sets} frame={frame()} />}
+        {sets => (
+          <>
+            {/* Off-screen measurement layers: one per slide, rendering the FULL
+                final code so its natural box drives the surface sizing. */}
+            <For each={sets}>
+              {(set, i) => (
+                <MeasureLayer
+                  set={set}
+                  style={textStyle()}
+                  onResize={box => setBoxAt(i(), box)}
+                />
+              )}
+            </For>
+            <PhaseRenderer sets={sets} frame={frame()} />
+          </>
+        )}
       </Show>
     </div>
+  );
+}
+
+/**
+ * Invisible, off-flow layer that renders a slide's full final code and reports its
+ * measured box via a resize observer. Never affects the visible surface box (it is
+ * absolutely positioned with a negative z-index); it only feeds the size signal
+ * that the surface then reads. Kept a plain full render so its metrics match the
+ * painted text exactly.
+ */
+function MeasureLayer(props: {
+  set: KeyedTokensInfo;
+  style: Record<string, string>;
+  onResize: (box: BoxSize) => void;
+}) {
+  const tokens = createMemo<RenderToken[]>(() => fullTokens(props.set));
+  // Measure the PURE content box (no padding): the surface is `content-box` and
+  // adds `surfacePadding()` itself, so measuring padding here would double-count it
+  // and make the playback window wider/taller than the live editor (breaks the
+  // pixel-stable swap, problem P1). Same font metrics, zero padding.
+  const style = createMemo(() => ({...props.style, padding: '0'}));
+  let ref!: HTMLPreElement;
+  createResizeObserver(
+    () => ref,
+    () => {
+      if (!ref) return;
+      // scrollWidth/Height give the intrinsic content box even when the parent is
+      // smaller than the content — resilient to the surface being explicitly sized.
+      props.onResize({width: ref.scrollWidth, height: ref.scrollHeight});
+    },
+  );
+  return (
+    <pre ref={ref} class={styles.measureLayer} style={style()} aria-hidden={'true'}>
+      <TokenList tokens={tokens()} />
+    </pre>
   );
 }
 
@@ -246,10 +362,8 @@ function FadePhase(props: {
       <pre class={styles.layer} style={{opacity: String(layers().entering.opacity)}}>
         <TokenList tokens={layers().entering.tokens} />
       </pre>
-      {/* In-flow spacer sizes the surface to the taller of the two layouts. */}
-      <pre class={styles.staticLayer} style={{visibility: 'hidden'}}>
-        <TokenList tokens={fullTokens(props.to)} />
-      </pre>
+      {/* Surface box is sized explicitly from the ghost measurements (boxSizing.ts),
+          interpolated across the transition — no in-flow spacer needed here. */}
     </>
   );
 }
@@ -271,10 +385,7 @@ function SlidePhase(props: {
       <div class={styles.slideLineLayer}>
         <For each={layers().entering}>{line => <SlideLineRow line={line} />}</For>
       </div>
-      {/* In-flow spacer sizes the surface to the final layout. */}
-      <pre class={styles.staticLayer} style={{visibility: 'hidden'}}>
-        <TokenList tokens={fullTokens(props.to)} />
-      </pre>
+      {/* Surface box is sized explicitly from the ghost measurements (boxSizing.ts). */}
     </>
   );
 }
@@ -326,10 +437,8 @@ function MorphPhase(props: {
       >
         <TokenList tokens={layers().entering.tokens} />
       </pre>
-      {/* In-flow spacer sizes the surface to the taller of the two layouts. */}
-      <pre class={styles.staticLayer} style={{visibility: 'hidden'}}>
-        <TokenList tokens={fullTokens(props.to)} />
-      </pre>
+      {/* Surface box is sized explicitly from the ghost measurements (boxSizing.ts),
+          interpolated across the transition — no in-flow spacer needed here. */}
     </>
   );
 }

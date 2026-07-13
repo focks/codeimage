@@ -52,7 +52,10 @@ export const slideLine = style({
   willChange: 'transform, opacity',
 });
 
-// A blinking caret shown at the end of the typed prefix.
+// Caret shown at the end of the typed prefix. Its blink is driven by an inline,
+// progress-derived opacity (see `caretOpacity`) rather than a CSS animation, so it
+// stays a deterministic pure function of the injected time — required for
+// seek-exact video export. The static opacity here is just a fallback.
 export const caret = style({
   display: 'inline-block',
   width: '2px',

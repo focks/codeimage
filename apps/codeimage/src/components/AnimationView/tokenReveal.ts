@@ -1,4 +1,5 @@
 import type {KeyedToken, KeyedTokensInfo} from 'shiki-magic-move/core';
+import {easeInOutCubic, easeOutCubic} from '../../state/playback/easing';
 import {typedCharCount} from '../../state/playback/timeline';
 import {diffLines} from './lineDiff';
 
@@ -70,6 +71,26 @@ export function revealTypedTokens(
   return out;
 }
 
+/**
+ * Deterministic caret opacity for the typewriter entry. The typing reveal itself
+ * stays linear (typing is inherently linear), but the caret blinks so it reads as
+ * a live cursor rather than a static bar. Modelled as a square wave of the number
+ * of characters "typed so far" (`progress × charCount`), toggling every
+ * `blinkPeriodChars` characters — a pure function of progress, so a given time
+ * always yields the same caret and export stays seek-exact.
+ */
+export function caretOpacity(
+  progress: number,
+  charCount: number,
+  blinkPeriodChars = 6,
+): number {
+  const period = Math.max(1, blinkPeriodChars);
+  const typed = Math.max(0, progress) * Math.max(0, charCount);
+  // Square wave: on for the first half of each period, off for the second.
+  const phase = Math.floor(typed / period) % 2;
+  return phase === 0 ? 1 : 0.25;
+}
+
 /** All tokens fully visible (steady-state hold render). */
 export function fullTokens(info: KeyedTokensInfo): RenderToken[] {
   return info.tokens.map(token => toRenderToken(token, 1));
@@ -99,7 +120,9 @@ export function morphLayers(
   to: KeyedTokensInfo,
   progress: number,
 ): {leaving: MorphLayer; entering: MorphLayer} {
-  const p = clamp01(progress);
+  // Morph eases both fade and movement with easeInOutCubic so the cross-dissolve
+  // accelerates then settles instead of tracking time linearly.
+  const p = easeInOutCubic(progress);
   const toKeys = new Set(to.tokens.map(t => t.key));
   const fromKeys = new Set(from.tokens.map(t => t.key));
 
@@ -136,7 +159,8 @@ export function fadeLayers(
   to: KeyedTokensInfo,
   progress: number,
 ): {leaving: MorphLayer; entering: MorphLayer} {
-  const p = clamp01(progress);
+  // Fade eases opacity with easeInOutCubic — a smooth in/out dissolve.
+  const p = easeInOutCubic(progress);
   return {
     leaving: {
       tokens: fullTokens(from),
@@ -195,7 +219,11 @@ export function slideLines(
   to: KeyedTokensInfo,
   progress: number,
 ): SlideLineLayers {
-  const p = clamp01(progress);
+  // Slide eases X-position with easeOutCubic (lines rush in then settle) and
+  // opacity with easeInOutCubic (a softer in/out fade). Two separate curves so
+  // the horizontal travel decelerates while the fade stays symmetric.
+  const pos = easeOutCubic(progress);
+  const op = easeInOutCubic(progress);
   const fromLines = tokensToLines(from);
   const toLines = tokensToLines(to);
   const diff = diffLines(from.code, to.code);
@@ -218,25 +246,19 @@ export function slideLines(
       leaving.push({
         key: `r-${entry.prevIndex}-${i}`,
         tokens,
-        translateX: -0.35 * p,
-        opacity: 1 - p,
+        translateX: -0.35 * pos,
+        opacity: 1 - op,
       });
     } else {
       const tokens = toLines[entry.nextIndex] ?? [];
       entering.push({
         key: `a-${entry.nextIndex}-${i}`,
         tokens,
-        translateX: 0.35 * (1 - p),
-        opacity: p,
+        translateX: 0.35 * (1 - pos),
+        opacity: op,
       });
     }
   });
 
   return {leaving, entering};
-}
-
-function clamp01(value: number): number {
-  if (value < 0) return 0;
-  if (value > 1) return 1;
-  return value;
 }

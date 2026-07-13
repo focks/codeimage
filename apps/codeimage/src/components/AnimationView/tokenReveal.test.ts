@@ -1,6 +1,13 @@
 import {describe, expect, it} from 'vitest';
 import type {KeyedToken, KeyedTokensInfo} from 'shiki-magic-move/core';
-import {fullTokens, morphLayers, revealTypedTokens} from './tokenReveal';
+import {
+  caretOpacity,
+  fadeLayers,
+  fullTokens,
+  morphLayers,
+  revealTypedTokens,
+  slideLines,
+} from './tokenReveal';
 
 /** Build a minimal KeyedTokensInfo from (content, key) pairs. */
 function makeInfo(pairs: [content: string, key: string][]): KeyedTokensInfo {
@@ -130,5 +137,100 @@ describe('morphLayers', () => {
     const a = morphLayers(from, to, 0.33);
     const b = morphLayers(from, to, 0.33);
     expect(a).toEqual(b);
+  });
+
+  it('eases the fade: opacity is BELOW linear early (easeInOutCubic)', () => {
+    // easeInOutCubic(0.25) = 0.0625, so the entering layer is well under 0.25.
+    const {entering, leaving} = morphLayers(from, to, 0.25);
+    expect(entering.opacity).toBeCloseTo(0.0625, 5);
+    expect(leaving.opacity).toBeCloseTo(0.9375, 5);
+    expect(entering.opacity).toBeLessThan(0.25);
+  });
+
+  it('non-linear deltas at equal steps (accel then decel)', () => {
+    const at = (p: number) => morphLayers(from, to, p).entering.opacity;
+    const d1 = at(0.5) - at(0.25); // middle
+    const d0 = at(0.25) - at(0); // first
+    const d3 = at(1) - at(0.75); // last
+    expect(d1).toBeGreaterThan(d0);
+    expect(d1).toBeGreaterThan(d3);
+  });
+});
+
+describe('fadeLayers', () => {
+  const from = makeInfo([['a', 'k1']]);
+  const to = makeInfo([['b', 'k2']]);
+
+  it('pins the endpoints', () => {
+    expect(fadeLayers(from, to, 0).entering.opacity).toBe(0);
+    expect(fadeLayers(from, to, 1).entering.opacity).toBe(1);
+  });
+
+  it('eases opacity (easeInOutCubic) and is symmetric at the midpoint', () => {
+    expect(fadeLayers(from, to, 0.5).entering.opacity).toBeCloseTo(0.5, 6);
+    expect(fadeLayers(from, to, 0.25).entering.opacity).toBeCloseTo(0.0625, 5);
+    expect(fadeLayers(from, to, 0.75).entering.opacity).toBeCloseTo(0.9375, 5);
+  });
+
+  it('is seek-exact: same progress => identical layers', () => {
+    expect(fadeLayers(from, to, 0.4)).toEqual(fadeLayers(from, to, 0.4));
+  });
+});
+
+describe('slideLines', () => {
+  // Line 0 stays ("keep"); line 1 changes ("old" -> "new").
+  const from = makeInfo([
+    ['keep', 'l0a'],
+    ['\n', 'nl'],
+    ['old', 'l1a'],
+  ]);
+  const to = makeInfo([
+    ['keep', 'l0b'],
+    ['\n', 'nl2'],
+    ['new', 'l1b'],
+  ]);
+
+  it('eases X-position with easeOutCubic (front-loaded travel)', () => {
+    // Entering added line travels 0.35*(1 - easeOutCubic(p)). At p=0.25,
+    // easeOutCubic(0.25)=0.578125, so translateX = 0.35*0.421875 ≈ 0.14766.
+    const added = slideLines(from, to, 0.25).entering.find(l =>
+      l.key.startsWith('a-'),
+    )!;
+    expect(added.translateX).toBeCloseTo(0.35 * (1 - 0.578125), 5);
+    // At the same progress, opacity uses easeInOutCubic(0.25)=0.0625 — a DIFFERENT
+    // curve, proving position and opacity are eased independently.
+    expect(added.opacity).toBeCloseTo(0.0625, 5);
+  });
+
+  it('settles fully at progress 1 (no residual offset)', () => {
+    const added = slideLines(from, to, 1).entering.find(l =>
+      l.key.startsWith('a-'),
+    )!;
+    expect(added.translateX).toBeCloseTo(0, 6);
+    expect(added.opacity).toBeCloseTo(1, 6);
+  });
+
+  it('is seek-exact: same progress => identical layout', () => {
+    expect(slideLines(from, to, 0.4)).toEqual(slideLines(from, to, 0.4));
+  });
+});
+
+describe('caretOpacity', () => {
+  it('is deterministic (pure function of progress) — seek-exact', () => {
+    expect(caretOpacity(0.37, 40)).toBe(caretOpacity(0.37, 40));
+  });
+
+  it('blinks: a square wave that toggles between on and dim', () => {
+    // 60 chars, period 6 => 10 blink half-cycles across the type-in.
+    const values = new Set<number>();
+    for (let p = 0; p <= 1; p += 0.02) values.add(caretOpacity(p, 60));
+    // Exactly two distinct opacity levels (on / dim), never a smooth ramp.
+    expect(values).toEqual(new Set([1, 0.25]));
+  });
+
+  it('starts visible and stays a clean 0/1-style toggle', () => {
+    expect(caretOpacity(0, 40)).toBe(1);
+    // First `period` chars are "on"; the next `period` are dim.
+    expect(caretOpacity(6 / 40, 40)).toBe(0.25); // 6 chars typed => second half
   });
 });

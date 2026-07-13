@@ -17,6 +17,7 @@ import {
   shikiThemeNameFor,
 } from './shikiHighlighter';
 import {
+  caretOpacity,
   fadeLayers,
   fullTokens,
   morphLayers,
@@ -216,10 +217,14 @@ function TypewriterPhase(props: {to: KeyedTokensInfo; progress: number}) {
   const tokens = createMemo<RenderToken[]>(() =>
     revealTypedTokens(props.to, props.progress),
   );
+  // Caret blink derived deterministically from progress (pure — seek-exact).
+  const caretAlpha = createMemo(() =>
+    caretOpacity(props.progress, props.to.code.length),
+  );
   return (
     <pre class={styles.staticLayer}>
       <TokenList tokens={tokens()} />
-      <span class={styles.caret} />
+      <span class={styles.caret} style={{opacity: String(caretAlpha())}} />
     </pre>
   );
 }

@@ -223,11 +223,13 @@ describe('resolveChromeAtTime', () => {
       ],
       SETTINGS,
     );
-    const q = resolveChromeAtTime(timeline, 1250, slides); // progress 0.25
+    // t=1250 is LINEAR progress 0.25; the crossfade uses eased progress, so
+    // easeInOutCubic(0.25) = 0.0625 drives the layer opacities (front-loaded S).
+    const q = resolveChromeAtTime(timeline, 1250, slides); // linear progress 0.25
     expect(q?.backgroundLayers.from).toBe('#101010');
-    expect(q?.backgroundLayers.fromOpacity).toBeCloseTo(0.75, 5);
+    expect(q?.backgroundLayers.fromOpacity).toBeCloseTo(0.9375, 5);
     expect(q?.backgroundLayers.to).toBe(grad);
-    expect(q?.backgroundLayers.toOpacity).toBeCloseTo(0.25, 5);
+    expect(q?.backgroundLayers.toOpacity).toBeCloseTo(0.0625, 5);
   });
 
   it('is seek-exact: same time yields identical chrome', () => {
@@ -235,6 +237,26 @@ describe('resolveChromeAtTime', () => {
     expect(resolveChromeAtTime(timeline, 1333, slides)).toEqual(
       resolveChromeAtTime(timeline, 1333, slides),
     );
+  });
+
+  it('eases padding: non-linear deltas at equal 25/50/75% time steps', () => {
+    const {timeline, slides} = twoSlideTimeline();
+    // Transition runs 1000..2000ms; padding lerps 64 -> 128 (span 64), eased.
+    const p25 = resolveChromeAtTime(timeline, 1250, slides)!.frame.padding;
+    const p50 = resolveChromeAtTime(timeline, 1500, slides)!.frame.padding;
+    const p75 = resolveChromeAtTime(timeline, 1750, slides)!.frame.padding;
+    // easeInOutCubic: 0.0625 / 0.5 / 0.9375 of the span above the start (64).
+    expect(p25).toBeCloseTo(64 + 64 * 0.0625, 5); // 68
+    expect(p50).toBeCloseTo(64 + 64 * 0.5, 5); // 96
+    expect(p75).toBeCloseTo(64 + 64 * 0.9375, 5); // 124
+    // Deltas across equal time steps are NOT constant (that would be linear):
+    // the middle step advances far more than the outer steps (accel/decel).
+    const d1 = p50 - p25;
+    const d2 = p75 - p50;
+    const d0 = p25 - (64 + 64 * 0); // first quarter delta from t=1000
+    expect(d1).toBeGreaterThan(d0);
+    expect(d1).toBeGreaterThan(p75 - (64 + 64)); // vs last quarter to end
+    expect(d1).toBeCloseTo(d2, 5); // symmetric about the midpoint
   });
 
   it('returns null for an empty deck', () => {

@@ -1,6 +1,7 @@
 import type {PersistedFrameState} from '@codeimage/store/frame/model';
 import type {PersistedTerminalState} from '@codeimage/store/editor/model';
 import type {Slide} from '../slides/model';
+import {easeInOutCubic} from './easing';
 import {stateAt, type Timeline} from './timeline';
 
 /**
@@ -211,11 +212,17 @@ export function resolveChromeAtTime(
   const entering = slides[slideIndex + 1];
   if (!entering) return staticChrome(leaving);
 
-  const p = clamp01(progress);
-  const half = p < 0.5;
+  // `half` (the discrete boolean/terminal swap) keys off the LINEAR temporal
+  // midpoint; the continuous tweens use eased progress so padding/radius/opacity
+  // and the background accelerate then settle instead of moving at a constant
+  // rate (fixes the "transitions not proper" complaint). easeInOutCubic(0.5) is
+  // exactly 0.5, so the swap and the tween cross the midpoint together.
+  const linearP = clamp01(progress);
+  const half = linearP < 0.5;
+  const p = easeInOutCubic(linearP);
 
   const frame: PersistedFrameState = {
-    // Numeric props tween continuously.
+    // Numeric props tween continuously (eased).
     padding: lerp(leaving.frame.padding, entering.frame.padding, p),
     radius: lerp(leaving.frame.radius, entering.frame.radius, p),
     opacity: lerp(leaving.frame.opacity, entering.frame.opacity, p),
@@ -225,7 +232,7 @@ export function resolveChromeAtTime(
     minHeight: half ? leaving.frame.minHeight : entering.frame.minHeight,
     visible: half ? leaving.frame.visible : entering.frame.visible,
     // Background handled via layers; keep the resolved endpoint here for stores
-    // that read a single value (flat→flat gets the lerp'd color).
+    // that read a single value (flat→flat gets the eased lerp'd color).
     background:
       resolveBackgroundLayers(
         leaving.frame.background,
@@ -234,7 +241,8 @@ export function resolveChromeAtTime(
       ).from ?? entering.frame.background,
   };
 
-  // Terminal window style hard-swaps at 50% (header/type can't tween).
+  // Terminal window style hard-swaps at the temporal midpoint (header/type can't
+  // tween).
   const terminal = half ? leaving.terminal : entering.terminal;
 
   return {

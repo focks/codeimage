@@ -1,7 +1,13 @@
 import {
   clampFrameMinSize,
+  clampFrameSize,
+  coercePersistedFrameSize,
+  MAX_FRAME_HEIGHT,
   MAX_FRAME_MIN_HEIGHT,
   MAX_FRAME_MIN_WIDTH,
+  MAX_FRAME_WIDTH,
+  MIN_FRAME_HEIGHT,
+  MIN_FRAME_WIDTH,
   type FrameState,
   type PersistedFrameState,
 } from '@codeimage/store/frame/model';
@@ -20,7 +26,10 @@ export function getInitialFrameState(): FrameState {
     radius: 8,
     visible: true,
     opacity: 100,
-    autoWidth: false,
+    // Both axes start content-driven; explicit width/height only apply once the
+    // user drags a handle or types a value (which flips the matching auto flag).
+    autoWidth: true,
+    autoHeight: true,
     scale: 1,
     width: 0,
     height: 0,
@@ -37,6 +46,7 @@ type Commands = {
   setRadius: number;
   setScale: number;
   setAutoWidth: boolean;
+  setAutoHeight: boolean;
   setMinWidth: number;
   setMinHeight: number;
   setWidth: number;
@@ -77,6 +87,10 @@ const frameState = defineStore(() => getInitialFrameState())
         ...state,
         autoWidth,
       }))
+      .hold(store.commands.setAutoHeight, (autoHeight, {state}) => ({
+        ...state,
+        autoHeight,
+      }))
       .hold(store.commands.setMinWidth, (minWidth, {state}) => ({
         ...state,
         minWidth: clampFrameMinSize(minWidth, MAX_FRAME_MIN_WIDTH),
@@ -93,13 +107,19 @@ const frameState = defineStore(() => getInitialFrameState())
         ...state,
         visible: !state.visible,
       }))
+      // Setting an explicit width/height is a user intent ("size this axis"), so
+      // it clamps into the allowed range AND turns the matching auto flag off.
+      // The passive resize-observer measurement path uses a different entry point
+      // (see Frame.tsx) so it never flips auto off on its own.
       .hold(store.commands.setWidth, (width, {state}) => ({
         ...state,
-        width,
+        width: clampFrameSize(width, MIN_FRAME_WIDTH, MAX_FRAME_WIDTH),
+        autoWidth: false,
       }))
       .hold(store.commands.setHeight, (height, {state}) => ({
         ...state,
-        height,
+        height: clampFrameSize(height, MIN_FRAME_HEIGHT, MAX_FRAME_HEIGHT),
+        autoHeight: false,
       }))
       .hold(store.commands.setNextPadding, (_, {state}) => {
         const availablePadding = appEnvironment.editorPadding;
@@ -114,13 +134,13 @@ const frameState = defineStore(() => getInitialFrameState())
         store.set(state => ({...state, ...presetData}));
       })
       .hold(store.commands.setFromPersistedState, (_, {state}) => {
-        // Old persisted slides predate min-size; coerce missing fields to 0 (off)
-        // so hydrating pre-v2 data never yields undefined min-width/height.
+        // Old persisted slides predate min-size (pre-v2) and explicit width/height
+        // (pre-v5). `coercePersistedFrameSize` fills absent fields: min-size -> 0
+        // (off), autoWidth/autoHeight -> true (content-driven), width/height -> 0,
+        // so hydrating older data reproduces the historical content-driven box.
         return {
           ...state,
-          ..._,
-          minWidth: _.minWidth ?? 0,
-          minHeight: _.minHeight ?? 0,
+          ...coercePersistedFrameSize(_),
         };
       })
       .hold(store.commands.setAspectRatio, (aspectRatio, {state}) => {
@@ -139,6 +159,10 @@ const frameState = defineStore(() => getInitialFrameState())
         radius: state.radius,
         minWidth: state.minWidth ?? 0,
         minHeight: state.minHeight ?? 0,
+        autoWidth: state.autoWidth ?? true,
+        autoHeight: state.autoHeight ?? true,
+        width: state.width ?? 0,
+        height: state.height ?? 0,
       } as PersistedFrameState;
     };
 
@@ -150,6 +174,9 @@ const frameState = defineStore(() => getInitialFrameState())
         store.commands.setRadius,
         store.commands.setScale,
         store.commands.setAutoWidth,
+        store.commands.setAutoHeight,
+        store.commands.setWidth,
+        store.commands.setHeight,
         store.commands.setMinWidth,
         store.commands.setMinHeight,
         store.commands.setVisibility,

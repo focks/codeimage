@@ -197,6 +197,52 @@ export const dragControlRight = style([
   {right: frameVars.controlOffset},
 ]);
 
+// Vertical handle base: horizontally centred on the top/bottom edge with an
+// ns-resize cursor. Mirrors `dragControlHandler` (which is vertically centred on
+// the left/right edge) so the two axes read identically.
+export const dragControlVerticalHandler = style({
+  vars: {
+    [frameVars.controlOffset]: `calc(${frameVars.controlHandleSize} / 2 * -1)`,
+  },
+  selectors: {
+    [`${dragControls} &`]: {
+      position: 'absolute',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      zIndex: 10,
+      cursor: 'ns-resize',
+      width: frameVars.controlHandleSize,
+      height: frameVars.controlHandleSize,
+    },
+    '&:hover::after': {
+      transform: 'translate(-50%, -50%) scale(2)',
+    },
+  },
+  '::after': {
+    content: '',
+    position: 'absolute',
+    left: '50%',
+    top: '50%',
+    width: '8px',
+    height: '8px',
+    borderRadius: themeVars.borderRadius.lg,
+    boxShadow: themeVars.boxShadow.lg,
+    transform: 'translate(-50%, -50%)',
+    backgroundColor: frameVars.controlHandleColor,
+    transition: 'transform .1s ease',
+  },
+});
+
+export const dragControlTop = style([
+  dragControlVerticalHandler,
+  {top: frameVars.controlOffset},
+]);
+
+export const dragControlBottom = style([
+  dragControlVerticalHandler,
+  {bottom: frameVars.controlOffset},
+]);
+
 export const resizeLine = style({
   position: 'absolute',
   bottom: -25,
@@ -228,6 +274,30 @@ export const resizeLineDivider = style({
   top: '50%',
   width: '100%',
   transform: 'transformY(50%)',
+});
+
+// Vertical resize indicator: a thin rule down the RIGHT edge with the height
+// badge centred on it. Counterpart of `resizeLine`, rotated to the vertical axis.
+export const resizeLineVertical = style({
+  position: 'absolute',
+  right: -25,
+  top: 0,
+  height: '100%',
+  width: '15px',
+  borderTop: `1px solid ${frameVars.resizeLineBackgroundColor}`,
+  borderBottom: `1px solid ${frameVars.resizeLineBackgroundColor}`,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+});
+
+export const resizeLineDividerVertical = style({
+  position: 'absolute',
+  borderColor: frameVars.resizeLineBackgroundColor,
+  top: 0,
+  left: '50%',
+  height: '100%',
+  transform: 'transformX(50%)',
 });
 
 export const watermark = style({

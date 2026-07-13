@@ -130,6 +130,10 @@ function frame(over: Partial<PersistedFrameState>): PersistedFrameState {
     opacity: 100,
     minWidth: 0,
     minHeight: 0,
+    autoWidth: true,
+    autoHeight: true,
+    width: 0,
+    height: 0,
     ...over,
   };
 }

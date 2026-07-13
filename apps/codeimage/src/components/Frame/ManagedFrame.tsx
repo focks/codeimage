@@ -28,6 +28,10 @@ export function ManagedFrame() {
       visible={frame.visible}
       minWidth={frame.minWidth}
       minHeight={frame.minHeight}
+      autoWidth={frame.autoWidth}
+      autoHeight={frame.autoHeight}
+      width={frame.width}
+      height={frame.height}
       aspectRatio={frame.aspectRatio}
       onWidthChange={getFrameState().setWidth}
       onHeightChange={getFrameState().setHeight}

@@ -230,6 +230,12 @@ export function resolveChromeAtTime(
     // export canvas never resizes mid-transition (it's locked to the max size).
     minWidth: half ? leaving.frame.minWidth : entering.frame.minWidth,
     minHeight: half ? leaving.frame.minHeight : entering.frame.minHeight,
+    // Explicit window size + its auto flags hard-swap at the midpoint too (a size
+    // change is a discrete canvas resize, not something to tween per frame).
+    autoWidth: half ? leaving.frame.autoWidth : entering.frame.autoWidth,
+    autoHeight: half ? leaving.frame.autoHeight : entering.frame.autoHeight,
+    width: half ? leaving.frame.width : entering.frame.width,
+    height: half ? leaving.frame.height : entering.frame.height,
     visible: half ? leaving.frame.visible : entering.frame.visible,
     // Background handled via layers; keep the resolved endpoint here for stores
     // that read a single value (flat→flat gets the eased lerp'd color).

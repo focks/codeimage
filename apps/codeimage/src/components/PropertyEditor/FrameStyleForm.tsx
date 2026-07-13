@@ -1,9 +1,13 @@
 import {useI18n} from '@codeimage/locale';
 import {getFrameState} from '@codeimage/store/editor/frame';
 import {
+  MAX_FRAME_HEIGHT,
   MAX_FRAME_MIN_HEIGHT,
   MAX_FRAME_MIN_WIDTH,
+  MAX_FRAME_WIDTH,
+  MIN_FRAME_HEIGHT,
   MIN_FRAME_SIZE,
+  MIN_FRAME_WIDTH,
 } from '@codeimage/store/frame/model';
 import {RangeField} from '@codeimage/ui';
 import {getUmami} from '@core/constants/umami';
@@ -166,6 +170,86 @@ export const FrameStyleForm: ParentComponent = () => {
           </SuspenseEditorItem>
         </TwoColumnPanelRow>
       </PanelRow>
+
+      <PanelRow for={'autoWidthField'} label={'Auto width'}>
+        <TwoColumnPanelRow>
+          <SuspenseEditorItem
+            fallback={<SkeletonLine width={'100%'} height={'26px'} />}
+          >
+            <SegmentedField
+              adapt
+              id={'autoWidthField'}
+              size={'xs'}
+              value={frame.store.autoWidth}
+              onChange={frame.setAutoWidth}
+              items={[
+                {label: t('common.yes'), value: true},
+                {label: t('common.no'), value: false},
+              ]}
+            />
+          </SuspenseEditorItem>
+        </TwoColumnPanelRow>
+      </PanelRow>
+
+      <Show when={!frame.store.autoWidth}>
+        <PanelRow for={'widthField'} label={'Width (px)'}>
+          <TwoColumnPanelRow>
+            <SuspenseEditorItem
+              fallback={<SkeletonLine width={'100%'} height={'26px'} />}
+            >
+              <NumberField
+                size={'xs'}
+                id={'widthField'}
+                min={MIN_FRAME_WIDTH}
+                max={MAX_FRAME_WIDTH}
+                step={10}
+                value={frame.store.width}
+                onChange={onNumber(frame.setWidth)}
+              />
+            </SuspenseEditorItem>
+          </TwoColumnPanelRow>
+        </PanelRow>
+      </Show>
+
+      <PanelRow for={'autoHeightField'} label={'Auto height'}>
+        <TwoColumnPanelRow>
+          <SuspenseEditorItem
+            fallback={<SkeletonLine width={'100%'} height={'26px'} />}
+          >
+            <SegmentedField
+              adapt
+              id={'autoHeightField'}
+              size={'xs'}
+              value={frame.store.autoHeight}
+              onChange={frame.setAutoHeight}
+              items={[
+                {label: t('common.yes'), value: true},
+                {label: t('common.no'), value: false},
+              ]}
+            />
+          </SuspenseEditorItem>
+        </TwoColumnPanelRow>
+      </PanelRow>
+
+      <Show when={!frame.store.autoHeight}>
+        <PanelRow for={'heightField'} label={'Height (px)'}>
+          <TwoColumnPanelRow>
+            <SuspenseEditorItem
+              fallback={<SkeletonLine width={'100%'} height={'26px'} />}
+            >
+              <NumberField
+                size={'xs'}
+                id={'heightField'}
+                min={MIN_FRAME_HEIGHT}
+                max={MAX_FRAME_HEIGHT}
+                step={10}
+                value={frame.store.height}
+                onChange={onNumber(frame.setHeight)}
+              />
+            </SuspenseEditorItem>
+          </TwoColumnPanelRow>
+        </PanelRow>
+      </Show>
 
       <PanelRow for={'minWidthField'} label={'Min width (px)'}>
         <TwoColumnPanelRow>

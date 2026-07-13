@@ -9,10 +9,15 @@ import {Box, FadeInOutTransition} from '@codeimage/ui';
 import {exportExclude as _exportExclude} from '@core/directives/exportExclude';
 import {useModality} from '@core/hooks/isMobile';
 import {createHorizontalResize} from '@core/hooks/resizable';
+import {createVerticalResize} from '@core/hooks/verticalResizable';
+import {
+  MAX_FRAME_HEIGHT,
+  MIN_FRAME_HEIGHT,
+} from '@codeimage/store/frame/model';
 import {createResizeObserver} from '@solid-primitives/resize-observer';
 import {assignInlineVars} from '@vanilla-extract/dynamic';
 import type {ParentComponent} from 'solid-js';
-import {onCleanup, onMount, Show} from 'solid-js';
+import {createEffect, on, onCleanup, onMount, Show} from 'solid-js';
 import * as styles from './Frame.css';
 
 export const exportExclude = _exportExclude;
@@ -29,21 +34,62 @@ interface FrameProps {
   minWidth?: number;
   /** User-set minimum window height in px. 0 disables the floor. */
   minHeight?: number;
+  /** `true` => width is content-driven; `false` => the explicit `width` applies. */
+  autoWidth?: boolean;
+  /** `true` => height is content-driven; `false` => the explicit `height` applies. */
+  autoHeight?: boolean;
+  /** Explicit window width in px, applied only when `autoWidth` is `false`. */
+  width?: number;
+  /** Explicit window height in px, applied only when `autoHeight` is `false`. */
+  height?: number;
+  /** Commit an explicit width (px). Turns auto-width off in the store. */
   onWidthChange: (width: number) => void;
+  /** Commit an explicit height (px). Turns auto-height off in the store. */
   onHeightChange: (height: number) => void;
 }
 
 export const Frame: ParentComponent<FrameProps> = props => {
-  const {width, height, onResizeStart, setRef, resizing, ref, refresh} =
-    createHorizontalResize({
-      minWidth: 200,
-      maxWidth: 1920,
-      aspectRatio: () => {
-        if (!props.aspectRatio) return null;
-        const [w, h] = props.aspectRatio.split('/').map(Number);
-        return w / h;
-      },
-    });
+  const {
+    width: dragWidth,
+    height: dragAspectHeight,
+    onResizeStart,
+    setRef,
+    resizing,
+    ref,
+    refresh,
+  } = createHorizontalResize({
+    minWidth: 200,
+    maxWidth: 1920,
+    aspectRatio: () => {
+      if (!props.aspectRatio) return null;
+      const [w, h] = props.aspectRatio.split('/').map(Number);
+      return w / h;
+    },
+  });
+
+  // Vertical drag (top/bottom handles) shares the same `.container` ref as the
+  // horizontal hook — see `setBothRefs`. It commits an explicit height to the
+  // store on drag end (turning auto-height off); the live drag height feeds the
+  // badge + CSS while dragging.
+  const {
+    height: dragHeight,
+    onResizeStart: onVerticalResizeStart,
+    resizing: resizingHeight,
+    setRef: setVerticalRef,
+  } = createVerticalResize({
+    minHeight: MIN_FRAME_HEIGHT,
+    maxHeight: MAX_FRAME_HEIGHT,
+    // Natural content height (padding-box) is the hard floor: dragging shorter
+    // clamps to the content so it is never cropped (CLAMP-to-content choice).
+    contentHeight: () => ref()?.scrollHeight ?? 0,
+    onCommit: h => props.onHeightChange(h),
+  });
+
+  // Both resize hooks measure/drive the SAME container element.
+  const setBothRefs = (el: HTMLElement) => {
+    setRef(el);
+    setVerticalRef(el);
+  };
 
   const assetsStore = getAssetsStore();
   const exportCanvasStore = getExportCanvasStore();
@@ -64,13 +110,28 @@ export const Frame: ParentComponent<FrameProps> = props => {
   // keeps using the Portal-mounted PreviewFrame).
   let wrapperRef!: HTMLDivElement;
 
+  // The effective explicit width/height in px: the live drag value while a drag is
+  // in flight (smooth feedback), otherwise the store's committed explicit value —
+  // but only when that axis is NOT auto. `0`/auto => fall back to content-driven.
+  const effectiveWidth = () => {
+    if (resizing()) return dragWidth();
+    return props.autoWidth === false ? (props.width ?? 0) : 0;
+  };
+  const effectiveHeight = () => {
+    if (resizingHeight()) return dragHeight();
+    // The aspect-ratio picker also drives a height via the horizontal hook; honour
+    // it when set. Otherwise use the explicit store height when auto-height is off.
+    if (dragAspectHeight()) return dragAspectHeight();
+    return props.autoHeight === false ? (props.height ?? 0) : 0;
+  };
+
   // Enforce the user-set minimum on the resolved size. The container's
   // `min-width: max-content` / `min-height: 100%` stay intact (content is never
   // clipped and still grows past the floor), while a length floor is applied
   // here on `width`/`height`. `max(<length>, <length>)` is valid CSS; the
   // intrinsic `auto`/`100%` case falls back to the floor as a plain length.
   const computedWidth = () => {
-    const size = width();
+    const size = effectiveWidth();
     const floor = props.minWidth ?? 0;
     if (size && floor > 0) return `max(${size}px, ${floor}px)`;
     if (size) return `${size}px`;
@@ -78,25 +139,31 @@ export const Frame: ParentComponent<FrameProps> = props => {
   };
 
   const computedHeight = () => {
-    const size = height();
+    const size = effectiveHeight();
     const floor = props.minHeight ?? 0;
     if (size && floor > 0) return `max(${size}px, ${floor}px)`;
     if (size) return `${size}px`;
     return floor > 0 ? `max(100%, ${floor}px)` : '100%';
   };
 
-  const roundedWidth = () => `${Math.floor(width())}px`;
+  // Badge shows whichever axis is actively being dragged.
+  const roundedWidth = () => `${Math.floor(dragWidth())}px`;
+  const roundedHeight = () => `${Math.floor(dragHeight())}px`;
   const modality = useModality();
 
-  createResizeObserver(ref, () => {
-    setTimeout(() => {
-      const refValue = ref();
-      if (!refValue) return;
-      const {clientWidth, clientHeight} = refValue;
-      props.onWidthChange(clientWidth);
-      props.onHeightChange(clientHeight);
-    });
-  });
+  // Commit the horizontal drag width to the store on drag end so it persists per
+  // slide (the width was previously ephemeral). Fires on the resizing→false edge.
+  createEffect(
+    on(
+      resizing,
+      isResizing => {
+        if (!isResizing && dragWidth() > 0) {
+          props.onWidthChange(Math.round(dragWidth()));
+        }
+      },
+      {defer: true},
+    ),
+  );
 
   onMount(() => {
     exportCanvasStore.setLiveFrameRef(wrapperRef);
@@ -104,8 +171,6 @@ export const Frame: ParentComponent<FrameProps> = props => {
 
     const refValue = ref();
     if (!refValue) return;
-
-    props.onWidthChange?.(refValue.clientWidth ?? 0);
 
     const preview = refValue.querySelector('[data-preview]');
     createResizeObserver(
@@ -133,8 +198,9 @@ export const Frame: ParentComponent<FrameProps> = props => {
       class={styles.wrapper}
     >
       <div
-        ref={setRef}
+        ref={setBothRefs}
         class={styles.container}
+        data-testid={'frame-container'}
         data-playback={playback.isPlaying ? 'true' : undefined}
         style={assignInlineVars({
           [styles.frameVars.width]: computedWidth(),
@@ -200,8 +266,26 @@ export const Frame: ParentComponent<FrameProps> = props => {
 
         <Show when={modality === 'full' && !props.readOnly}>
           <div class={styles.dragControls} use:exportExclude={true}>
-            <div class={styles.dragControlLeft} onMouseDown={onResizeStart} />
-            <div class={styles.dragControlRight} onMouseDown={onResizeStart} />
+            <div
+              class={styles.dragControlLeft}
+              data-testid={'frame-resize-left'}
+              onMouseDown={onResizeStart}
+            />
+            <div
+              class={styles.dragControlRight}
+              data-testid={'frame-resize-right'}
+              onMouseDown={onResizeStart}
+            />
+            <div
+              class={styles.dragControlTop}
+              data-testid={'frame-resize-top'}
+              onMouseDown={onVerticalResizeStart}
+            />
+            <div
+              class={styles.dragControlBottom}
+              data-testid={'frame-resize-bottom'}
+              onMouseDown={onVerticalResizeStart}
+            />
           </div>
         </Show>
 
@@ -215,6 +299,16 @@ export const Frame: ParentComponent<FrameProps> = props => {
         >
           <Box class={styles.resizeBadge}>{roundedWidth()}</Box>
           <hr class={styles.resizeLineDivider} />
+        </Box>
+      </FadeInOutTransition>
+
+      <FadeInOutTransition show={resizingHeight()}>
+        <Box
+          class={styles.resizeLineVertical}
+          ref={el => exportExclude(el, () => true)}
+        >
+          <Box class={styles.resizeBadge}>{roundedHeight()}</Box>
+          <hr class={styles.resizeLineDividerVertical} />
         </Box>
       </FadeInOutTransition>
     </div>

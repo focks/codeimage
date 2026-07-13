@@ -62,4 +62,7 @@ export const SLIDES_IDB_KEY = 'slides$v1';
 // simply lack these keys, which reads as "inherit global" — no coercion needed.
 // v4 adds per-slide transitionMs (entry duration override). Pre-v4 slides lack the
 // key, which reads as "inherit global transitionMs" — again no coercion needed.
-export const SLIDES_VERSION = '4';
+// v5 adds explicit frame width/height + autoWidth/autoHeight to PersistedFrameState.
+// Pre-v5 slides lack these keys; `coercePersistedFrameSize` (frame/model.ts) fills
+// them (auto flags -> true, sizes -> 0) so older decks stay content-driven.
+export const SLIDES_VERSION = '5';

@@ -25,7 +25,7 @@ export interface PlaybackSettings {
 }
 
 /** Fallback default entry mode when `settings.defaultTransition` is unset. */
-export const DEFAULT_TRANSITION: EntryMode = 'morph';
+export const DEFAULT_TRANSITION: EntryMode = 'typewriter';
 
 /** The concrete entry animations a slide can play (no `inherit` here). */
 export type EntryMode = 'none' | 'fade' | 'slide' | 'morph' | 'typewriter';

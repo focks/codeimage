@@ -13,7 +13,7 @@ export const DEFAULT_PLAYBACK_SETTINGS: PlaybackSettings = {
   typingCharsPerSec: 30,
   holdMs: 2500,
   transitionMs: 800,
-  defaultTransition: 'morph',
+  defaultTransition: 'typewriter',
 };
 
 /** Reasonable UI bounds for the settings controls. */

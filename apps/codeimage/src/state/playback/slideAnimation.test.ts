@@ -1,7 +1,12 @@
 import {describe, expect, it} from 'vitest';
 import {DEFAULT_PLAYBACK_SETTINGS} from './model';
 import {resolveEntryMode, resolveSlideInputs} from './slideAnimation';
-import {buildTimeline, type PlaybackSettings} from './timeline';
+import {
+  buildTimeline,
+  charMsFromCharsPerSec,
+  typewriterDurationMs,
+  type PlaybackSettings,
+} from './timeline';
 
 const base: PlaybackSettings = {
   typingIntro: true,
@@ -83,49 +88,65 @@ describe('resolveSlideInputs', () => {
 describe('default 3-slide deck timeline (complaint B/C regression)', () => {
   // A fresh deck has no per-slide overrides at all (transitionIn/transitionMs
   // undefined). This guards the user's core expectation: with untouched defaults
-  // every slide boundary plays a visible, non-zero morph transition — not a
-  // zero-duration hard cut. Uses the SHIPPED defaults, not a fixture, so a
-  // regression in DEFAULT_PLAYBACK_SETTINGS (e.g. losing defaultTransition or
-  // transitionMs) is caught here.
-  it('produces a non-zero morph transition on every boundary with untouched defaults', () => {
+  // every slide's text visibly types in (default transition is typewriter) —
+  // never a zero-duration hard cut. Uses the SHIPPED defaults, not a fixture,
+  // so a regression in DEFAULT_PLAYBACK_SETTINGS (e.g. losing defaultTransition
+  // or the typing rate) is caught here.
+  it('types every slide in with untouched defaults (non-zero entries)', () => {
     const plainSlides = [{}, {}, {}]; // three slides, no overrides
+    const charCounts = [180, 30, 690];
     const inputs = resolveSlideInputs(
       plainSlides,
-      [180, 30, 690],
+      charCounts,
       DEFAULT_PLAYBACK_SETTINGS,
     );
 
-    // Slide 0 inherits typingIntro (on) => typewriter; slides 1..2 => default morph.
+    // Slide 0 inherits typingIntro (on) => typewriter; slides 1..2 => default
+    // transition, which also types the incoming slide's text.
     expect(inputs.map(i => i.entryMode)).toEqual([
       'typewriter',
-      'morph',
-      'morph',
+      'typewriter',
+      'typewriter',
     ]);
 
     const timeline = buildTimeline(inputs, DEFAULT_PLAYBACK_SETTINGS);
     const transitions = timeline.segments.filter(s => s.phase === 'transition');
-    // Two boundaries (1->2 and 2->3), each an 800ms morph — never 0/undefined.
+    const charMs = charMsFromCharsPerSec(
+      DEFAULT_PLAYBACK_SETTINGS.typingCharsPerSec,
+    );
+    // Two boundaries (1->2 and 2->3), each typing the incoming slide's chars.
     expect(transitions).toHaveLength(2);
-    for (const seg of transitions) {
-      expect(seg.mode).toBe('morph');
-      expect(seg.durationMs).toBe(DEFAULT_PLAYBACK_SETTINGS.transitionMs);
+    transitions.forEach((seg, i) => {
+      expect(seg.mode).toBe('typewriter');
+      expect(seg.durationMs).toBe(
+        typewriterDurationMs(charCounts[i + 1], charMs),
+      );
       expect(seg.durationMs).toBeGreaterThan(0);
-    }
+    });
   });
 
   it('honours a per-slide transitionMs override on an otherwise-default deck', () => {
     // The transition picker writes ms into slides[i].transitionMs; the timeline
-    // must use it for that boundary and the global default for the others.
-    const slides = [{}, {transitionMs: 2000}, {}];
+    // must use it for that boundary. transitionMs only applies to non-typewriter
+    // modes (typewriter is timed per character), so the overridden slide gets an
+    // explicit fade while the untouched boundary keeps the typewriter default.
+    const slides = [{}, {transitionIn: 'fade' as const, transitionMs: 2000}, {}];
+    const charCounts = [180, 30, 690];
     const inputs = resolveSlideInputs(
       slides,
-      [180, 30, 690],
+      charCounts,
       DEFAULT_PLAYBACK_SETTINGS,
     );
     const timeline = buildTimeline(inputs, DEFAULT_PLAYBACK_SETTINGS);
     const transitions = timeline.segments.filter(s => s.phase === 'transition');
-    // Boundary into slide 1 uses the override (2000ms); into slide 2 the default.
+    // Boundary into slide 1 uses the override (2000ms fade); into slide 2 the
+    // default typewriter timed by the incoming slide's length.
     expect(transitions[0].durationMs).toBe(2000);
-    expect(transitions[1].durationMs).toBe(DEFAULT_PLAYBACK_SETTINGS.transitionMs);
+    expect(transitions[1].durationMs).toBe(
+      typewriterDurationMs(
+        charCounts[2],
+        charMsFromCharsPerSec(DEFAULT_PLAYBACK_SETTINGS.typingCharsPerSec),
+      ),
+    );
   });
 });

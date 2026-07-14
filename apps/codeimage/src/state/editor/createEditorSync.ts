@@ -159,11 +159,14 @@ function createEditorSyncAdapter(props: ParentProps<{ snippetId: string }>) {
         switchMap(([frame, terminal, { editors, options }]) => {
           const workspace = activeWorkspace();
           if (!workspace) return EMPTY;
+          // fontSize is a local-only editor option; the remote editorOptions
+          // schema does not include it, so strip it before syncing to the API.
+          const { fontSize: _fontSize, ...remoteEditorOptions } = options;
           const dataToSave: ApiTypes.UpdateProjectApi["request"]["body"] = {
             frame,
             terminal,
             editors,
-            editorOptions: options,
+            editorOptions: remoteEditorOptions,
           };
           return from(
             API.project.updateSnippet({

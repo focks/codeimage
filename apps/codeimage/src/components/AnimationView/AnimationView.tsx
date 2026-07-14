@@ -43,7 +43,8 @@ import {
   type BoxSize,
   type SlideHeightInput,
 } from './boxSizing';
-import {EDITOR_METRICS, surfacePadding} from './editorMetrics';
+import {editorMetrics, EDITOR_METRICS, surfacePadding} from './editorMetrics';
+import {clampFontSize} from '@codeimage/store/editor/model';
 import {
   ensureHighlighter,
   keyedTokensFor,
@@ -101,6 +102,18 @@ export function AnimationView() {
     return `${font?.name ?? 'monospace'}, monospace`;
   });
   const fontWeight = createMemo(() => editor.state.options.fontWeight ?? 400);
+
+  // Per-slide code font size (px). editorOptions are per-slide, so different slides
+  // can render at different sizes; each slide's MeasureLayer and painted layers use
+  // its own size so a mixed-size deck (e.g. 14px -> 24px) measures + paints each
+  // slide at its true size (and the ghost boxes morph smoothly between them).
+  const slideFontSizes = createMemo<number[]>(() =>
+    slidesStore.state.slides.map(slide =>
+      clampFontSize(slide.editor.options.fontSize),
+    ),
+  );
+  const fontSizeAt = (index: number): number =>
+    slideFontSizes()[index] ?? EDITOR_METRICS.fontSizePx;
 
   // Build keyed tokens for every slide once (recomputed if slides/theme change).
   const [tokenSets] = createResource(
@@ -394,23 +407,33 @@ export function AnimationView() {
   });
   onCleanup(() => playback.setFollowedHeight(null));
 
-  const textStyle = createMemo(() => ({
-    'font-family': fontFamily(),
-    'font-weight': String(fontWeight()),
-    // Mirror the live editor's exact box so the CanvasEditor -> AnimationView swap
-    // on Play does not shift the code block (problem P1). Values are the rendered
-    // `.cm-content` / `.cm-line` metrics (see editorMetrics.ts).
-    'font-size': `${EDITOR_METRICS.fontSizePx}px`,
-    'line-height': String(EDITOR_METRICS.lineHeight),
-    'tab-size': String(EDITOR_METRICS.tabSize),
-    padding: surfacePadding(),
-  }));
+  // Text style for a given font size. Mirrors the live editor's exact box so the
+  // CanvasEditor -> AnimationView swap on Play does not shift the code block
+  // (problem P1); the size varies per slide (editorMetrics is a pure function of it),
+  // while line-height/tab-size/padding follow the measured editor CSS.
+  const textStyleFor = (fontSizePx: number): Record<string, string> => {
+    const m = editorMetrics(fontSizePx);
+    return {
+      'font-family': fontFamily(),
+      'font-weight': String(fontWeight()),
+      'font-size': `${m.fontSizePx}px`,
+      'line-height': String(m.lineHeight),
+      'tab-size': String(m.tabSize),
+      padding: surfacePadding(),
+    };
+  };
+  // The surface container's own style uses the CURRENT frame's slide size (the
+  // primary slide being shown/typed); each painted layer additionally sets its own
+  // slide's size so a transition between mixed sizes paints each side correctly.
+  const surfaceTextStyle = createMemo(() =>
+    textStyleFor(fontSizeAt(frame().slideIndex)),
+  );
 
   return (
     <div
       class={styles.surface}
       style={{
-        ...textStyle(),
+        ...surfaceTextStyle(),
         // Explicit box from the ghost measurements. `content-box` because the
         // measured box already excludes padding; the surface adds its own padding
         // on top, mirroring the editor's padded content box.
@@ -428,12 +451,13 @@ export function AnimationView() {
         {sets => (
           <>
             {/* Off-screen measurement layers: one per slide, rendering the FULL
-                final code so its natural box drives the surface sizing. */}
+                final code at THAT slide's font size so its natural box (which drives
+                the surface sizing + the transition morph) matches the painted size. */}
             <For each={sets}>
               {(set, i) => (
                 <MeasureLayer
                   set={set}
-                  style={textStyle()}
+                  style={textStyleFor(fontSizeAt(i()))}
                   onResize={box => setBoxAt(i(), box)}
                 />
               )}
@@ -442,6 +466,7 @@ export function AnimationView() {
               sets={sets}
               frame={frame()}
               entry={enteringEntry()}
+              styleFor={i => textStyleFor(fontSizeAt(i))}
             />
           </>
         )}
@@ -498,6 +523,8 @@ interface PhaseRendererProps {
    * (typewriter / fade / slide). `undefined` for morph/none/hold frames.
    */
   entry: {charMs: number; spec: EntrySpec} | undefined;
+  /** Resolve the per-slide text style (font size etc.) for slide `index`. */
+  styleFor: (index: number) => Record<string, string>;
 }
 
 /**
@@ -506,15 +533,25 @@ interface PhaseRendererProps {
  *   hold        => static full render
  *   typing      => slide-0 entry from empty, per `frame.mode`
  *   transition  => slide i-1 -> i change, per `frame.mode` (the entering mode)
+ *
+ * The `from` layer paints slide `slideIndex` at its size, the `to` layer paints the
+ * incoming slide (`slideIndex+1` on a transition, else `slideIndex`) at its size, so
+ * a transition between mixed sizes renders each side at its true font size.
  */
 function PhaseRenderer(props: PhaseRendererProps) {
   const currentSet = () => props.sets[props.frame.slideIndex];
   const nextSet = () => props.sets[props.frame.slideIndex + 1];
+  const currentStyle = () => props.styleFor(props.frame.slideIndex);
+  const nextStyle = () => props.styleFor(props.frame.slideIndex + 1);
 
   return (
     <Show when={currentSet()} keyed>
       {set => (
-        <Switch fallback={<StaticPhase set={set} frame={props.frame} />}>
+        <Switch
+          fallback={
+            <StaticPhase set={set} frame={props.frame} style={currentStyle()} />
+          }
+        >
           {/* Slide 0's entry from empty (no outgoing text -> no clear beat). */}
           <Match when={props.frame.phase === 'typing'}>
             <EntryRenderer
@@ -523,6 +560,8 @@ function PhaseRenderer(props: PhaseRendererProps) {
               mode={props.frame.mode}
               progress={props.frame.progress}
               entry={props.entry}
+              fromStyle={currentStyle()}
+              toStyle={currentStyle()}
             />
           </Match>
           {/* Change from the leaving slide into the entering (next) slide. */}
@@ -534,6 +573,8 @@ function PhaseRenderer(props: PhaseRendererProps) {
                 mode={props.frame.mode}
                 progress={props.frame.progress}
                 entry={props.entry}
+                fromStyle={currentStyle()}
+                toStyle={nextStyle()}
               />
             )}
           </Match>
@@ -555,11 +596,20 @@ function EntryRenderer(props: {
   progress: number;
   /** Unified entry spec + ms-per-char for the composite modes (undefined for morph). */
   entry: {charMs: number; spec: EntrySpec} | undefined;
+  /** Per-slide text style for the outgoing (`from`) and incoming (`to`) slides. */
+  fromStyle: Record<string, string>;
+  toStyle: Record<string, string>;
 }) {
   return (
     <Switch
       fallback={
-        <MorphPhase from={props.from} to={props.to} progress={props.progress} />
+        <MorphPhase
+          from={props.from}
+          to={props.to}
+          progress={props.progress}
+          fromStyle={props.fromStyle}
+          toStyle={props.toStyle}
+        />
       }
     >
       <Match
@@ -572,6 +622,8 @@ function EntryRenderer(props: {
             to={props.to}
             progress={props.progress}
             spec={entry.spec}
+            fromStyle={props.fromStyle}
+            toStyle={props.toStyle}
           />
         )}
       </Match>
@@ -588,6 +640,8 @@ function EntryRenderer(props: {
             progress={props.progress}
             spec={entry.spec}
             slide={props.mode === 'slide'}
+            fromStyle={props.fromStyle}
+            toStyle={props.toStyle}
           />
         )}
       </Match>
@@ -599,13 +653,30 @@ function EntryRenderer(props: {
 function StaticPhase(props: {
   set: KeyedTokensInfo;
   frame: ReturnType<typeof stateAt>;
+  style: Record<string, string>;
 }) {
   const tokens = createMemo<RenderToken[]>(() => fullTokens(props.set));
   return (
-    <pre class={styles.staticLayer}>
+    <pre class={styles.staticLayer} style={layerFontStyle(props.style)}>
       <TokenList tokens={tokens()} />
     </pre>
   );
+}
+
+/**
+ * The font-only subset of a per-slide text style, applied on an individual painted
+ * layer so it renders at ITS slide's size even when the surface container carries a
+ * different slide's size (mixed-size transition). Padding/box come from the surface;
+ * only the font metrics are per-layer here.
+ */
+function layerFontStyle(
+  style: Record<string, string>,
+): Record<string, string> {
+  return {
+    'font-size': style['font-size'],
+    'line-height': style['line-height'],
+    'tab-size': style['tab-size'],
+  };
 }
 
 /**
@@ -614,7 +685,11 @@ function StaticPhase(props: {
  * local reveal progress (0 at the empty editor, 1 at fully typed) — pure, so preview
  * and export stay seek-exact.
  */
-function TypedCode(props: {to: KeyedTokensInfo; localProgress: number}) {
+function TypedCode(props: {
+  to: KeyedTokensInfo;
+  localProgress: number;
+  style: Record<string, string>;
+}) {
   const typedTokens = createMemo<RenderToken[]>(() =>
     revealTypedTokens(props.to, props.localProgress),
   );
@@ -622,7 +697,7 @@ function TypedCode(props: {to: KeyedTokensInfo; localProgress: number}) {
     caretOpacity(props.localProgress, props.to.code.length),
   );
   return (
-    <pre class={styles.staticLayer}>
+    <pre class={styles.staticLayer} style={layerFontStyle(props.style)}>
       <TokenList tokens={typedTokens()} />
       <span class={styles.caret} style={{opacity: String(caretAlpha())}} />
     </pre>
@@ -645,6 +720,8 @@ function TypewriterPhase(props: {
   to: KeyedTokensInfo;
   progress: number;
   spec: EntrySpec;
+  fromStyle: Record<string, string>;
+  toStyle: Record<string, string>;
 }) {
   const sub = createMemo(() => entrySubPhaseAt(props.progress, props.spec));
   // clear: outgoing tokens fading out (eased), no caret yet.
@@ -655,19 +732,27 @@ function TypewriterPhase(props: {
       <Match when={sub().phase === 'clear'}>
         <pre
           class={styles.staticLayer}
-          style={{opacity: String(clearOpacity())}}
+          style={{
+            ...layerFontStyle(props.fromStyle),
+            opacity: String(clearOpacity()),
+          }}
         >
           <TokenList tokens={fullTokens(props.from)} />
         </pre>
       </Match>
       <Match when={sub().phase === 'empty'}>
-        {/* Clean empty-editor beat: only the blinking caret, no code. */}
-        <pre class={styles.staticLayer}>
+        {/* Clean empty-editor beat: only the blinking caret, no code. Sized at the
+            INCOMING slide's size (the caret about to type it). */}
+        <pre class={styles.staticLayer} style={layerFontStyle(props.toStyle)}>
           <span class={styles.caret} style={{opacity: '1'}} />
         </pre>
       </Match>
       <Match when={sub().phase === 'type'}>
-        <TypedCode to={props.to} localProgress={sub().localProgress} />
+        <TypedCode
+          to={props.to}
+          localProgress={sub().localProgress}
+          style={props.toStyle}
+        />
       </Match>
     </Switch>
   );
@@ -694,6 +779,8 @@ function WindowEntryPhase(props: {
   progress: number;
   spec: EntrySpec;
   slide: boolean;
+  fromStyle: Record<string, string>;
+  toStyle: Record<string, string>;
 }) {
   const sub = createMemo(() => entrySubPhaseAt(props.progress, props.spec));
   // The window animation brings in an EMPTY editor, never the final text.
@@ -706,6 +793,8 @@ function WindowEntryPhase(props: {
           from={props.from}
           to={emptyTo()}
           progress={sub().localProgress}
+          fromStyle={props.fromStyle}
+          toStyle={props.toStyle}
         />
       </Match>
       <Match when={sub().phase === 'window' && props.slide}>
@@ -713,10 +802,16 @@ function WindowEntryPhase(props: {
           from={props.from}
           to={emptyTo()}
           progress={sub().localProgress}
+          fromStyle={props.fromStyle}
+          toStyle={props.toStyle}
         />
       </Match>
       <Match when={sub().phase === 'type'}>
-        <TypedCode to={props.to} localProgress={sub().localProgress} />
+        <TypedCode
+          to={props.to}
+          localProgress={sub().localProgress}
+          style={props.toStyle}
+        />
       </Match>
     </Switch>
   );
@@ -727,6 +822,8 @@ function FadeLayers(props: {
   from: KeyedTokensInfo;
   to: KeyedTokensInfo;
   progress: number;
+  fromStyle: Record<string, string>;
+  toStyle: Record<string, string>;
 }) {
   const layers = createMemo(() =>
     fadeLayers(props.from, props.to, props.progress),
@@ -735,13 +832,19 @@ function FadeLayers(props: {
     <>
       <pre
         class={styles.layer}
-        style={{opacity: String(layers().leaving.opacity)}}
+        style={{
+          ...layerFontStyle(props.fromStyle),
+          opacity: String(layers().leaving.opacity),
+        }}
       >
         <TokenList tokens={layers().leaving.tokens} />
       </pre>
       <pre
         class={styles.layer}
-        style={{opacity: String(layers().entering.opacity)}}
+        style={{
+          ...layerFontStyle(props.toStyle),
+          opacity: String(layers().entering.opacity),
+        }}
       >
         <TokenList tokens={layers().entering.tokens} />
       </pre>
@@ -756,18 +859,20 @@ function SlideLayers(props: {
   from: KeyedTokensInfo;
   to: KeyedTokensInfo;
   progress: number;
+  fromStyle: Record<string, string>;
+  toStyle: Record<string, string>;
 }) {
   const layers = createMemo(() =>
     slideLines(props.from, props.to, props.progress),
   );
   return (
     <>
-      <div class={styles.slideLineLayer}>
+      <div class={styles.slideLineLayer} style={layerFontStyle(props.fromStyle)}>
         <For each={layers().leaving}>
           {line => <SlideLineRow line={line} />}
         </For>
       </div>
-      <div class={styles.slideLineLayer}>
+      <div class={styles.slideLineLayer} style={layerFontStyle(props.toStyle)}>
         <For each={layers().entering}>
           {line => <SlideLineRow line={line} />}
         </For>
@@ -797,11 +902,15 @@ function MorphPhase(props: {
   from: KeyedTokensInfo;
   to: KeyedTokensInfo;
   progress: number;
+  fromStyle: Record<string, string>;
+  toStyle: Record<string, string>;
 }) {
   const layers = createMemo(() =>
     morphLayers(props.from, props.to, props.progress),
   );
 
+  // translateY is in `em`, so it scales with each layer's own font size — the line
+  // offset matches the layer's line box even when the two slides differ in size.
   const layerTransform = (translateYLines: number) =>
     `translateY(${(translateYLines * EDITOR_METRICS.lineHeight).toFixed(3)}em)`;
 
@@ -810,6 +919,7 @@ function MorphPhase(props: {
       <pre
         class={styles.layer}
         style={{
+          ...layerFontStyle(props.fromStyle),
           opacity: String(layers().leaving.opacity),
           transform: layerTransform(layers().leaving.translateYLines),
         }}
@@ -819,6 +929,7 @@ function MorphPhase(props: {
       <pre
         class={styles.layer}
         style={{
+          ...layerFontStyle(props.toStyle),
           opacity: String(layers().entering.opacity),
           transform: layerTransform(layers().entering.translateYLines),
         }}

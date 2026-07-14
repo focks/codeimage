@@ -19,7 +19,7 @@ function makeSlide(id: string): Slide {
       borderType: null,
     },
     editor: {
-      options: {fontId: 'jetbrains', fontWeight: 400, showLineNumbers: false, themeId: 'dark', enableLigatures: true},
+      options: {fontId: 'jetbrains', fontWeight: 400, showLineNumbers: false, themeId: 'dark', enableLigatures: true, fontSize: 16},
       editors: [{id: 'e1', code: '// code', tabName: 'index.tsx', languageId: 'typescript', lineNumberStart: 1}],
     },
   };

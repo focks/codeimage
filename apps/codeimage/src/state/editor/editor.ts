@@ -12,6 +12,7 @@ import {createSelector} from 'solid-js';
 import type {SetStoreFunction} from 'solid-js/store';
 import {defineStore, provideState} from 'statebuilder';
 import {createCommand, withProxyCommands} from 'statebuilder/commands';
+import {clampFontSize, DEFAULT_FONT_SIZE} from './model';
 import type {EditorState, EditorUIOptions, PersistedEditorState} from './model';
 
 const defaultId = createUniqueId();
@@ -38,6 +39,7 @@ export function getInitialEditorUiOptions(): EditorUIOptions {
     fontWeight: appEnvironment.defaultState.editor.font.types[0].weight,
     focused: false,
     enableLigatures: true,
+    fontSize: DEFAULT_FONT_SIZE,
   };
 }
 
@@ -53,6 +55,7 @@ export function createEditorsStore() {
       setActiveEditorId: string;
       setFocused: boolean;
       setFontId: string;
+      setFontSize: number;
       setThemeId: string;
       setFontWeight: number;
       setShowLineNumbers: boolean;
@@ -81,6 +84,9 @@ export function createEditorsStore() {
     .hold(store.commands.setFontId, (fontId, {set}) =>
       set('options', 'fontId', fontId),
     )
+    .hold(store.commands.setFontSize, (fontSize, {set}) =>
+      set('options', 'fontSize', clampFontSize(fontSize)),
+    )
     .hold(store.commands.setThemeId, (themeId, {set}) =>
       set('options', 'themeId', themeId),
     )
@@ -107,8 +113,14 @@ export function createEditorsStore() {
           code: editor.code,
           lineNumberStart: editor.lineNumberStart,
         }));
+      const mergedOptions = {...state.options, ...persistedState.options};
       return {
-        options: {...state.options, ...persistedState.options},
+        options: {
+          ...mergedOptions,
+          // Pre-fontSize data lacks the key (or carries an out-of-range value);
+          // coerce to a valid size so old decks/slides render at the 16px default.
+          fontSize: clampFontSize(mergedOptions.fontSize),
+        },
         activeEditorId: editors[0].id,
         editors: editors.map(editor => {
           return {
@@ -148,6 +160,7 @@ export function createEditorsStore() {
         fontId: state.options.fontId,
         fontWeight: state.options.fontWeight,
         enableLigatures: state.options.enableLigatures ?? true,
+        fontSize: clampFontSize(state.options.fontSize),
       },
     };
   };
@@ -155,6 +168,7 @@ export function createEditorsStore() {
   const stateToPersist$ = from(
     store.watchCommand([
       store.commands.setFontId,
+      store.commands.setFontSize,
       store.commands.setThemeId,
       store.commands.setFontWeight,
       store.commands.setShowLineNumbers,
@@ -255,6 +269,8 @@ export function createEditorsStore() {
     );
     store.set('activeEditorId', item.editorTabs[0].id);
     store.set('options', item.editorOptions);
+    // The remote editorOptions schema has no fontSize; keep the store value valid.
+    store.set('options', 'fontSize', clampFontSize(store.get.options.fontSize));
     store.dispatch(editorUpdateCommand, void 0);
   };
 

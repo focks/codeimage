@@ -30,7 +30,9 @@ import {
 import {createCodeMirror, createEditorReadonly} from 'solid-codemirror';
 import type {VoidProps} from 'solid-js';
 import {createEffect, createMemo, createResource, on} from 'solid-js';
+import {clampFontSize} from '@codeimage/store/editor/model';
 import {createTabIcon} from '../../hooks/use-tab-icon';
+import {EDITOR_METRICS} from '../AnimationView/editorMetrics';
 
 const EDITOR_BASE_SETUP: Extension = [
   highlightSpecialChars(),
@@ -112,37 +114,44 @@ export default function CustomEditor(props: VoidProps<CustomEditorProps>) {
       themes()[0](),
   );
 
-  const baseTheme = EditorView.theme({
-    '&': {
-      textAlign: 'left',
-      background: 'transparent !important',
-    },
-    '.cm-content': {
-      textAlign: 'left',
-    },
-    '.cm-gutters': {
-      backgroundColor: 'transparent',
-      border: 'none',
-    },
-    '.cm-lineNumbers': {
-      position: 'sticky',
-      flexDirection: 'column',
-      flexShrink: 0,
-    },
-    '.cm-lineNumbers .cm-gutterElement': {
-      textAlign: 'right',
-      padding: '0 16px 0 8px',
-      lineHeight: '21px',
-    },
-    '.cm-line': {
-      padding: '0 2px 0 8px',
-    },
-    '.cm-cursor': {
-      borderLeftWidth: '2px',
-      height: '21px',
-      transform: 'translateY(-10%)',
-    },
-  });
+  // The line box the editor renders for the current font size (size * 1.4). The
+  // cursor height and line-number line-height must track it so they stay aligned
+  // at non-16 sizes (a fixed 21px cursor would be too short at 24px).
+  const baseTheme = (): Extension => {
+    const fontSize = clampFontSize(editorState.options.fontSize);
+    const lineBox = `${(fontSize * EDITOR_METRICS.lineHeight).toFixed(3)}px`;
+    return EditorView.theme({
+      '&': {
+        textAlign: 'left',
+        background: 'transparent !important',
+      },
+      '.cm-content': {
+        textAlign: 'left',
+      },
+      '.cm-gutters': {
+        backgroundColor: 'transparent',
+        border: 'none',
+      },
+      '.cm-lineNumbers': {
+        position: 'sticky',
+        flexDirection: 'column',
+        flexShrink: 0,
+      },
+      '.cm-lineNumbers .cm-gutterElement': {
+        textAlign: 'right',
+        padding: '0 16px 0 8px',
+        lineHeight: lineBox,
+      },
+      '.cm-line': {
+        padding: '0 2px 0 8px',
+      },
+      '.cm-cursor': {
+        borderLeftWidth: '2px',
+        height: lineBox,
+        transform: 'translateY(-10%)',
+      },
+    });
+  };
 
   const customFontExtension = (): Extension => {
     const font = selectedFont();
@@ -151,17 +160,26 @@ export default function CustomEditor(props: VoidProps<CustomEditorProps>) {
       enableLigatures = editorState.options.enableLigatures;
 
     const fontVariantLigatures = !!enableLigatures ? 'normal' : 'none';
+    // Rides the same theme path as font-family/weight so the live editor updates
+    // immediately when the size option changes. line-height stays the unitless 1.4
+    // that CodeMirror inherits, so the line box scales as fontSize * 1.4 (measured
+    // exact at 12/16/24) — the AnimationView metrics mirror the same ratio.
+    const fontSize = clampFontSize(editorState.options.fontSize);
 
     return EditorView.theme({
       '.cm-content *': {
         fontFamily: `${fontName}, monospace`,
         fontWeight: fontWeight,
         fontVariantLigatures,
+        fontSize: `${fontSize}px`,
+        lineHeight: String(EDITOR_METRICS.lineHeight),
       },
       '.cm-gutters': {
         fontFamily: `${fontName}, monospace`,
         fontWeight: 400,
         fontVariantLigatures,
+        fontSize: `${fontSize}px`,
+        lineHeight: String(EDITOR_METRICS.lineHeight),
       },
     });
   };
@@ -197,7 +215,7 @@ export default function CustomEditor(props: VoidProps<CustomEditorProps>) {
       : [];
   });
   createExtension(() => themeConfiguration()?.editorTheme || []);
-  createExtension(baseTheme);
+  createExtension(() => baseTheme());
 
   const reconfigureBaseSetup = createExtension(EDITOR_BASE_SETUP);
 

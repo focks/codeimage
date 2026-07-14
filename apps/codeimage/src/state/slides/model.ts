@@ -65,4 +65,7 @@ export const SLIDES_IDB_KEY = 'slides$v1';
 // v5 adds explicit frame width/height + autoWidth/autoHeight to PersistedFrameState.
 // Pre-v5 slides lack these keys; `coercePersistedFrameSize` (frame/model.ts) fills
 // them (auto flags -> true, sizes -> 0) so older decks stay content-driven.
-export const SLIDES_VERSION = '5';
+// v6 adds per-slide editor `fontSize` to PersistedEditorState.options. Pre-v6 slides
+// lack the key; `setFromPersistedState` (editor.ts) coerces it to the 16px default via
+// `clampFontSize`, so older decks render at the previous fixed size.
+export const SLIDES_VERSION = '6';

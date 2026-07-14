@@ -48,7 +48,13 @@ export const EditorStyleForm: ParentComponent = () => {
   } = getActiveEditorStore();
   const {
     state,
-    actions: {setShowLineNumbers, setFontWeight, setFontId, setEnableLigatures},
+    actions: {
+      setShowLineNumbers,
+      setFontWeight,
+      setFontId,
+      setFontSize,
+      setEnableLigatures,
+    },
     computed: {selectedFont},
   } = getRootEditorStore();
 
@@ -103,6 +109,14 @@ export const EditorStyleForm: ParentComponent = () => {
     key: 'label',
     valueKey: 'value',
   });
+
+  const fontSizeOptions = createSelectOptions(
+    [12, 14, 16, 18, 20, 22, 24, 28].map(size => ({
+      label: `${size}px`,
+      value: size,
+    })),
+    {key: 'label', valueKey: 'value'},
+  );
 
   return (
     <Show when={editor()}>
@@ -293,6 +307,27 @@ export const EditorStyleForm: ParentComponent = () => {
                     aria-label={'Font weight'}
                     id={'frameFontWeightField'}
                     options={fontWeightOptions.options()}
+                    size={'xs'}
+                  />
+                </SuspenseEditorItem>
+              </TwoColumnPanelRow>
+            </PanelRow>
+
+            <PanelRow for={'frameFontSizeField'} label={t('frame.fontSize')}>
+              <TwoColumnPanelRow>
+                <SuspenseEditorItem
+                  fallback={<SkeletonLine width={'85%'} height={'26px'} />}
+                >
+                  {/* @ts-expect-error Fix @codeui/kit types */}
+                  <Select
+                    {...fontSizeOptions.props()}
+                    {...fontSizeOptions.controlled(
+                      () => state.options.fontSize ?? 16,
+                      value => setFontSize(value ?? 16),
+                    )}
+                    aria-label={'Font size'}
+                    id={'frameFontSizeField'}
+                    options={fontSizeOptions.options()}
                     size={'xs'}
                   />
                 </SuspenseEditorItem>

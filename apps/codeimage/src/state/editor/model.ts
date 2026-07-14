@@ -1,5 +1,17 @@
 import type {PersistedFrameState} from '@codeimage/store/frame/model';
 
+/** Default code font size in px when no user/persisted value exists. */
+export const DEFAULT_FONT_SIZE = 16;
+/** Inclusive font-size bounds for the editor code (UI + stored value). */
+export const MIN_FONT_SIZE = 10;
+export const MAX_FONT_SIZE = 28;
+
+/** Clamp a (possibly missing/invalid) font size into the supported range. */
+export function clampFontSize(value: number | undefined | null): number {
+  if (value == null || Number.isNaN(value)) return DEFAULT_FONT_SIZE;
+  return Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, Math.round(value)));
+}
+
 export interface EditorUIOptions {
   fontId: string;
   fontWeight: number;
@@ -29,6 +41,8 @@ export interface EditorUIOptions {
   focused: boolean;
   themeId: string;
   enableLigatures: boolean;
+  /** Code font size in px. Absent in pre-fontSize data -> defaults to 16. */
+  fontSize: number;
 }
 
 export interface PersistedEditorState {

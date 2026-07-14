@@ -105,8 +105,8 @@ function ExportVideoDialog(props: ExportVideoDialogProps) {
   ];
 
   const fpsItems: SegmentedFieldItem<number>[] = [
-    {label: '30', value: 30},
-    {label: '60', value: 60},
+    {label: '30 fps', value: 30},
+    {label: '60 fps', value: 60},
   ];
 
   const formatItems: SegmentedFieldItem<ExportFormat>[] = [
@@ -197,41 +197,37 @@ function ExportVideoDialog(props: ExportVideoDialogProps) {
           </FlexField>
 
           <FlexField size={'md'}>
-            <div class={styles.summaryRow}>
-              <FieldLabel size={'sm'}>Frame rate</FieldLabel>
-              <Show
-                when={format() !== 'gif'}
-                fallback={
-                  <Text size={'sm'}>{GIF_MAX_FPS} fps (GIF max)</Text>
-                }
-              >
-                <SegmentedField
-                  autoWidth
-                  size={'md'}
-                  value={fps()}
-                  onChange={setFps}
-                  items={fpsItems}
-                />
-              </Show>
-            </div>
+            <FieldLabel size={'sm'}>Frame rate</FieldLabel>
+            <Show
+              when={format() !== 'gif'}
+              fallback={
+                <FieldLabelHint>
+                  {GIF_MAX_FPS} fps — locked for GIF
+                </FieldLabelHint>
+              }
+            >
+              <SegmentedField
+                autoWidth
+                size={'md'}
+                value={fps()}
+                onChange={setFps}
+                items={fpsItems}
+              />
+            </Show>
           </FlexField>
 
           <FlexField size={'md'}>
-            <div class={styles.summaryRow}>
-              <FieldLabel size={'sm'}>Resolution</FieldLabel>
-              <VStack spacing={'1'}>
-                <SegmentedField
-                  autoWidth
-                  size={'md'}
-                  value={pixelRatio()}
-                  onChange={setPixelRatio}
-                  items={pixelRatioItems}
-                />
-                <Show when={scaleWouldClamp()}>
-                  <Text size={'xs'}>Clamped to 4096 px limit</Text>
-                </Show>
-              </VStack>
-            </div>
+            <FieldLabel size={'sm'}>Resolution</FieldLabel>
+            <SegmentedField
+              autoWidth
+              size={'md'}
+              value={pixelRatio()}
+              onChange={setPixelRatio}
+              items={pixelRatioItems}
+            />
+            <Show when={scaleWouldClamp()}>
+              <FieldLabelHint>Clamped to 4096 px limit</FieldLabelHint>
+            </Show>
           </FlexField>
 
           <FlexField size={'md'}>

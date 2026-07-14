@@ -39,7 +39,7 @@ async function selectFormat(
 
 async function selectFps(
   page: import('@playwright/test').Page,
-  fps: '30' | '60',
+  fps: '30 fps' | '60 fps',
 ) {
   await page.getByRole('radio', {name: fps}).click();
 }
@@ -83,17 +83,17 @@ test.describe('Export video dialog options', () => {
     page,
   }) => {
     await openExportVideoDialog(page);
-    // Default is MP4 — fps selector should show 30 and 60.
-    await expect(page.getByRole('radio', {name: '30'})).toBeVisible();
-    await expect(page.getByRole('radio', {name: '60'})).toBeVisible();
+    // Default is MP4 — fps selector should show 30 fps and 60 fps.
+    await expect(page.getByRole('radio', {name: '30 fps'})).toBeVisible();
+    await expect(page.getByRole('radio', {name: '60 fps'})).toBeVisible();
   });
 
   test('GIF format hides fps radio and shows fps cap text', async ({page}) => {
     await openExportVideoDialog(page);
     await selectFormat(page, 'GIF');
     // The fps radio buttons should be replaced by a static text showing GIF cap.
-    await expect(page.getByRole('radio', {name: '30'})).not.toBeVisible();
-    await expect(page.getByRole('radio', {name: '60'})).not.toBeVisible();
+    await expect(page.getByRole('radio', {name: '30 fps'})).not.toBeVisible();
+    await expect(page.getByRole('radio', {name: '60 fps'})).not.toBeVisible();
     // Should show a text with the GIF fps cap (15 fps).
     await expect(page.getByText(/15 fps.*GIF/i)).toBeVisible();
   });
@@ -102,8 +102,8 @@ test.describe('Export video dialog options', () => {
     await openExportVideoDialog(page);
     await selectFormat(page, 'GIF');
     await selectFormat(page, 'MP4');
-    await expect(page.getByRole('radio', {name: '30'})).toBeVisible();
-    await expect(page.getByRole('radio', {name: '60'})).toBeVisible();
+    await expect(page.getByRole('radio', {name: '30 fps'})).toBeVisible();
+    await expect(page.getByRole('radio', {name: '60 fps'})).toBeVisible();
   });
 
   test('resolution selector shows 1x, 2x and 4x options', async ({page}) => {
@@ -235,7 +235,7 @@ test.describe('Export downloads (ffprobe validated)', () => {
       (async () => {
         await openExportVideoDialog(page);
         await selectFormat(page, 'MP4');
-        await selectFps(page, '60');
+        await selectFps(page, '60 fps');
         await selectScale(page, '1x');
         await page.getByRole('button', {name: 'Export'}).click();
       })(),

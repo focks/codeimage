@@ -97,6 +97,47 @@ describe('computeResizeHeight', () => {
     expect(computeResizeHeight(200, vBase)).toBe(150);
   });
 
+  it('height floor ignores content height (clip-to-content is the feature)', () => {
+    // REGRESSION GUARD. Width clamps to `max-content` so code never wraps
+    // (see computeResizeWidth), but height deliberately does the OPPOSITE: it may
+    // shrink BELOW the natural content height and the code clips at the bottom.
+    //
+    // The geometry's `floor` is `max(MIN_FRAME_DRAG_HEIGHT, userMinHeight)` ONLY —
+    // it must NEVER pick up the content/scroll height. If a future "symmetry" pass
+    // re-adds a content floor to the height path (as the width path legitimately
+    // has), this test fails: with a small floor (150) a drag that requests 220px —
+    // far below any realistic multi-line content height — must render 220, not snap
+    // up to some content height.
+    const tallContentDrag: VerticalResizeGeometry = {
+      startHeight: 900, // box started tall (content is ~900)
+      startY: 1000,
+      isTop: false, // bottom handle
+      floor: 150, // only the sane drag minimum, no user minHeight
+      maxHeight: 1920,
+    };
+    // Drag the bottom handle up by 680px -> requested 220, well under the ~900
+    // content height. It must track to 220 (clip the code), NOT clamp to content.
+    expect(computeResizeHeight(320, tallContentDrag)).toBe(220);
+    // And it only stops at the explicit floor, never at content.
+    expect(computeResizeHeight(0, tallContentDrag)).toBe(150);
+  });
+
+  it('floor is the user minHeight when it exceeds the hard minimum, still not content', () => {
+    // With a user minHeight of 400 the drag clamps at exactly 400 (by design),
+    // independent of how tall the content is — the floor is the user value, never
+    // the content height. Mirrors the app wiring:
+    // floor = resolveHeightFloor(MIN_FRAME_DRAG_HEIGHT=150, userMinHeight=400) = 400.
+    const userFloored: VerticalResizeGeometry = {
+      startHeight: 900,
+      startY: 1000,
+      isTop: false,
+      floor: 400,
+      maxHeight: 1920,
+    };
+    // Request 220 (below the 400 user floor) -> clamps at 400, NOT at content.
+    expect(computeResizeHeight(320, userFloored)).toBe(400);
+  });
+
   it('caps at maxHeight', () => {
     expect(computeResizeHeight(5000, vBase)).toBe(1920);
   });

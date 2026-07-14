@@ -10,6 +10,7 @@ export const [frameHandler, frameHandlerVars] = createTheme({
 export const wrapper = style([
   frameHandler,
   {
+    position: 'relative',
     width: '100%',
     height: '100%',
     display: 'grid',
@@ -49,6 +50,28 @@ export const content = style({
   position: 'relative',
   width: '100%',
   height: '100%',
+});
+
+/**
+ * Small unobtrusive zoom indicator ("82%") pinned to the bottom-right of the
+ * visible canvas area, shown only while the zoom-to-fit preview is active
+ * (scale < 1). Follows the resize badge styling (dark pill, white text).
+ */
+export const scaleBadge = style({
+  position: 'absolute',
+  right: '12px',
+  bottom: '12px',
+  zIndex: 20,
+  borderRadius: themeVars.borderRadius.lg,
+  padding: '2px 8px',
+  fontSize: '12px',
+  fontWeight: 600,
+  lineHeight: '1.4',
+  color: 'white',
+  background: 'rgba(0, 0, 0, 0.6)',
+  backdropFilter: 'blur(4px)',
+  userSelect: 'none',
+  pointerEvents: 'none',
 });
 
 export const squaredBackgroundOverlay = style({

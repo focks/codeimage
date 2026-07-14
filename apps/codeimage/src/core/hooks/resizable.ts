@@ -10,6 +10,7 @@ import {
 } from 'solid-js';
 import {createStore} from 'solid-js/store';
 import {fitAspect} from '../helpers/aspectRatio';
+import {scaleCorrectedPointer} from '../helpers/fitScale';
 import {
   computeResizeWidth,
   resolveHandleDirection,
@@ -30,6 +31,12 @@ interface CreateDraggableOptions {
   minWidth?: number;
   maxWidth?: number;
   aspectRatio?: Accessor<number | null>;
+  /**
+   * The current zoom-to-fit preview scale (`1` = 100%). When the frame is scaled
+   * down to fit, the cursor moves `scale`× slower across it, so raw pointer deltas
+   * are divided by this to keep the drag 1:1 in FRAME pixels. Defaults to 1.
+   */
+  scale?: Accessor<number>;
 }
 
 interface CreateDraggableState {
@@ -148,10 +155,14 @@ export function createHorizontalResize(
   };
 
   // Live drag: pure arithmetic against the geometry captured at pointer-down. No
-  // DOM reads, no forced layout — so the box edge tracks the cursor 1:1.
+  // DOM reads, no forced layout — so the box edge tracks the cursor 1:1. When the
+  // zoom-to-fit preview is scaled down, the raw screen X is mapped onto the frame
+  // axis (delta / scale) so the drag stays 1:1 in FRAME px rather than feeling
+  // slowed. At scale 1 this is the identity.
   const resizeMove = (x: number): void => {
     if (!geometry) return;
-    applyWidth(computeResizeWidth(x, geometry));
+    const correctedX = scaleCorrectedPointer(x, geometry.startX, options?.scale?.() ?? 1);
+    applyWidth(computeResizeWidth(correctedX, geometry));
   };
 
   // Refresh / aspect-ratio change: not a hot path. Re-measure the content floors

@@ -9,6 +9,7 @@ import {
   untrack,
 } from 'solid-js';
 import {createStore} from 'solid-js/store';
+import {scaleCorrectedPointer} from '../helpers/fitScale';
 import {
   computeResizeHeight,
   type VerticalResizeGeometry,
@@ -56,6 +57,12 @@ interface CreateVerticalResizeOptions {
   userMinHeight: () => number;
   /** Called with the final clamped height when a drag ends. */
   onCommit: (height: number) => void;
+  /**
+   * The current zoom-to-fit preview scale (`1` = 100%). When the frame is scaled
+   * down to fit, the cursor moves `scale`× slower across it, so raw pointer deltas
+   * are divided by this to keep the drag 1:1 in FRAME pixels. Defaults to 1.
+   */
+  scale?: () => number;
 }
 
 interface VerticalResizeState {
@@ -125,7 +132,11 @@ export function createVerticalResize(
 
   const resizeMove = (y: number): void => {
     if (!geometry) return;
-    setState({height: computeResizeHeight(y, geometry)});
+    // Map the raw screen Y onto the FRAME-pixel axis: when the preview is zoomed
+    // out to fit, `scale` px of frame move per screen px, so the delta from the
+    // drag origin is divided by scale. At scale 1 this is the identity.
+    const correctedY = scaleCorrectedPointer(y, geometry.startY, options.scale?.() ?? 1);
+    setState({height: computeResizeHeight(correctedY, geometry)});
   };
 
   const queueMove = (y: number): void => {

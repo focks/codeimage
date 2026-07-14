@@ -3,6 +3,7 @@ import {getAssetsStore, isAssetUrl} from '@codeimage/store/assets/assets';
 import {AssetsImage} from '@codeimage/store/assets/AssetsImage';
 import {getExportCanvasStore} from '@codeimage/store/canvas';
 import {getRootEditorStore} from '@codeimage/store/editor';
+import {getFrameState} from '@codeimage/store/editor/frame';
 import {dispatchUpdateTheme} from '@codeimage/store/effects/onThemeChange';
 import {getPlaybackStore} from '@codeimage/store/playback/playbackStore';
 import {Box, FadeInOutTransition} from '@codeimage/ui';
@@ -52,6 +53,11 @@ interface FrameProps {
 }
 
 export const Frame: ParentComponent<FrameProps> = props => {
+  // The live zoom-to-fit preview scale (`1` = 100%). Feeds the resize hooks so a
+  // drag stays 1:1 in FRAME px while the preview is zoomed out (see fitScale.ts).
+  const frameStore = getFrameState();
+  const fitScale = () => frameStore.store.scale ?? 1;
+
   const {
     width: dragWidth,
     height: dragAspectHeight,
@@ -63,6 +69,7 @@ export const Frame: ParentComponent<FrameProps> = props => {
   } = createHorizontalResize({
     minWidth: 200,
     maxWidth: 1920,
+    scale: fitScale,
     aspectRatio: () => {
       if (!props.aspectRatio) return null;
       const [w, h] = props.aspectRatio.split('/').map(Number);
@@ -88,6 +95,7 @@ export const Frame: ParentComponent<FrameProps> = props => {
     maxHeight: MAX_FRAME_HEIGHT,
     userMinHeight: () => props.minHeight ?? 0,
     onCommit: h => props.onHeightChange(h),
+    scale: fitScale,
   });
 
   // Both resize hooks measure/drive the SAME container element.

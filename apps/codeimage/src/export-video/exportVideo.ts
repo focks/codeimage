@@ -109,10 +109,21 @@ async function prewarmHighlighter(slides: readonly Slide[]): Promise<void> {
   await ensureHighlighter(langs, theme ? [shikiThemeFor(theme)] : []);
 }
 
-/** Measure the node's current rendered CSS box (unrounded, pre-pixelRatio). */
+/**
+ * Measure the node's current rendered box at its NATURAL (untransformed) size —
+ * pre-pixelRatio.
+ *
+ * We deliberately use `offsetWidth/offsetHeight` (border-box layout metrics) here,
+ * NOT `getBoundingClientRect()`. The zoom-to-fit preview applies a `scale()` on an
+ * ancestor `.handler`, and `getBoundingClientRect()` returns the TRANSFORMED (i.e.
+ * shrunk) box — which would silently export a smaller video. `offsetWidth/Height`
+ * ignore CSS transforms, so they yield the true layout size regardless of the fit
+ * zoom. This is exactly the metric dom-export uses to size each captured frame
+ * (`clientWidth/Height` + borders), so the probe and the capture stay consistent
+ * and exports keep the frame's natural resolution rather than the on-screen size.
+ */
 function measure(node: HTMLElement): Size {
-  const rect = node.getBoundingClientRect();
-  return {width: rect.width, height: rect.height};
+  return {width: node.offsetWidth, height: node.offsetHeight};
 }
 
 /**

@@ -112,7 +112,10 @@ export function App() {
               </Box>
             </Show>
 
-            <FrameHandler onScaleChange={frameStore.setScale}>
+            <FrameHandler
+              onScaleChange={frameStore.setScale}
+              isResizing={() => frameStore.store.resizing ?? false}
+            >
               <Suspense fallback={<FrameSkeleton />}>
                 <ManagedFrame />
               </Suspense>

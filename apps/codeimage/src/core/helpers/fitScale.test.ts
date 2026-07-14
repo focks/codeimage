@@ -6,6 +6,8 @@ import {
 import {
   computeFitScale,
   frameDeltaFromScreen,
+  freezeScale,
+  refitTarget,
   scaleCorrectedPointer,
 } from './fitScale';
 
@@ -130,5 +132,107 @@ describe('scale-corrected vertical drag (fitScale + resizeMath)', () => {
     // 100 screen px up -> 100 frame px shrink -> 980.
     expect(height).toBe(980);
     expect(geometry.startHeight - height).toBe(100);
+  });
+});
+
+describe('freezeScale', () => {
+  it('passes a valid positive scale through unchanged (the frozen value)', () => {
+    expect(freezeScale(0.42)).toBe(0.42);
+    expect(freezeScale(1)).toBe(1);
+  });
+
+  it('falls back to 1 for a non-positive / non-finite scale (safe multiplier)', () => {
+    expect(freezeScale(0)).toBe(1);
+    expect(freezeScale(-0.5)).toBe(1);
+    expect(freezeScale(NaN)).toBe(1);
+    expect(freezeScale(Infinity)).toBe(1);
+  });
+});
+
+/**
+ * A frozen-scale drag must track 1:1 in FRAME pixels for the WHOLE gesture even as
+ * the frame overflows the fit area — i.e. the scale captured at pointer-down is the
+ * only scale used, and the committed height still equals startHeight ± screenDelta
+ * / frozenScale at every intermediate point. This is what lets the frame follow the
+ * cursor monotonically during a grow drag instead of shrinking to refit.
+ */
+describe('frozen-scale drag correction (constant scale over the gesture)', () => {
+  const geometry: VerticalResizeGeometry = {
+    startHeight: 400,
+    startY: 300, // bottom handle: pulling DOWN grows
+    isTop: false,
+    floor: 150,
+    maxHeight: 4000,
+  };
+
+  it('grows monotonically with the cursor at a constant frozen scale', () => {
+    const frozen = freezeScale(0.5);
+    const heights = [40, 80, 160, 320, 500].map(screenDown => {
+      const corrected = scaleCorrectedPointer(
+        geometry.startY + screenDown,
+        geometry.startY,
+        frozen,
+      );
+      return computeResizeHeight(corrected, geometry);
+    });
+    // Each 1px of screen drag is 1/0.5 = 2px of frame height: strictly increasing.
+    expect(heights).toEqual([480, 560, 720, 1040, 1400]);
+    for (let i = 1; i < heights.length; i++) {
+      expect(heights[i]).toBeGreaterThan(heights[i - 1]);
+    }
+  });
+
+  it('uses ONLY the frozen scale — a would-be mid-drag refit does not change tracking', () => {
+    // Freeze at 0.5; even though the growing frame would refit to a smaller scale
+    // mid-drag, the correction keeps using 0.5, so the committed height is stable.
+    const frozen = freezeScale(0.5);
+    const corrected = scaleCorrectedPointer(
+      geometry.startY + 200,
+      geometry.startY,
+      frozen,
+    );
+    expect(computeResizeHeight(corrected, geometry)).toBe(400 + 200 / 0.5);
+  });
+});
+
+describe('refitTarget (eased-refit target computation)', () => {
+  it('is the fresh computeFitScale for the settled size', () => {
+    const {scale} = refitTarget(
+      {width: 700, height: 1080},
+      {width: 1000, height: 600},
+      0.5,
+    );
+    expect(scale).toBeCloseTo(600 / 1080, 6);
+  });
+
+  it('flags a real scale change vs the currently-displayed scale', () => {
+    // Displayed 0.9, fresh fit 0.5 -> changed.
+    const grown = refitTarget(
+      {width: 1600, height: 2000},
+      {width: 800, height: 800},
+      0.9,
+    );
+    expect(grown.changed).toBe(true);
+    expect(grown.scale).toBeCloseTo(0.4, 6);
+  });
+
+  it('reports unchanged when the fresh fit already matches the displayed scale', () => {
+    // Frame fits, fit scale is 1, and 1 is already displayed -> no re-arm, no flicker.
+    const same = refitTarget(
+      {width: 600, height: 400},
+      {width: 1000, height: 800},
+      1,
+    );
+    expect(same.scale).toBe(1);
+    expect(same.changed).toBe(false);
+  });
+
+  it('treats sub-epsilon float drift as unchanged (no pointless animation)', () => {
+    const drift = refitTarget(
+      {width: 700, height: 1080},
+      {width: 1000, height: 600},
+      600 / 1080 + 1e-6,
+    );
+    expect(drift.changed).toBe(false);
   });
 });

@@ -78,3 +78,45 @@ export function scaleCorrectedPointer(
 ): number {
   return origin + frameDeltaFromScreen(screen - origin, scale);
 }
+
+/**
+ * The scale to hold constant for the whole of a resize gesture ("frozen scale").
+ *
+ * A live drag rewrites the frame's natural size every pointer-move. If the fit
+ * scale were recomputed each of those frames, the transform (and, in the old
+ * margin approach, layout) would change under the cursor — the frame would grow
+ * with the drag yet simultaneously shrink to refit, fighting itself into the
+ * steppy feel. Canvas apps instead FREEZE the zoom during the gesture and let the
+ * box overflow, then refit on release. We freeze the scale captured at
+ * pointer-down; the drag deltas already divide by this scale (see
+ * {@link scaleCorrectedPointer}), so a constant scale keeps tracking exactly 1:1.
+ *
+ * Pure passthrough with the same non-positive/non-finite guard the rest of the
+ * module uses, so the freeze value is always a safe multiplier.
+ */
+export function freezeScale(scaleAtPointerDown: number): number {
+  return Number.isFinite(scaleAtPointerDown) && scaleAtPointerDown > 0
+    ? scaleAtPointerDown
+    : 1;
+}
+
+/**
+ * The scale to animate TO when a gesture releases (or any non-drag change fires):
+ * the fresh fit scale for the frame's now-settled natural size. This is just
+ * {@link computeFitScale} — named so the refit intent reads clearly at the call
+ * site and can be unit-tested as "the eased-refit target" independent of the DOM.
+ *
+ * Returned as `{scale, changed}` against the currently-displayed scale so the
+ * caller can skip arming the CSS transition when the target is already on screen
+ * (no pointless animation, no badge flicker). `changed` uses an epsilon so
+ * sub-pixel float drift never counts as a change.
+ */
+export function refitTarget(
+  frame: FitSize,
+  available: FitSize,
+  currentScale: number,
+): {readonly scale: number; readonly changed: boolean} {
+  const scale = computeFitScale(frame, available);
+  const changed = Math.abs(scale - currentScale) > 1e-4;
+  return {scale, changed};
+}

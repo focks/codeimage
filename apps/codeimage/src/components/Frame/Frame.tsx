@@ -216,6 +216,20 @@ export const Frame: ParentComponent<FrameProps> = props => {
     ),
   );
 
+  // Publish the combined resize state (either axis) to the frame store so
+  // FrameHandler can FREEZE the zoom-to-fit scale for the whole gesture and gate
+  // off the eased refit transition — the frame then follows the cursor without the
+  // fit recomputing under it (the "steppy" fight). Reset on the release edge, which
+  // is what arms FrameHandler's eased refit to the settled size.
+  const anyResizing = () => resizing() || resizingHeight();
+  createEffect(
+    on(
+      anyResizing,
+      dragging => frameStore.setResizing(dragging),
+      {defer: true},
+    ),
+  );
+
   onMount(() => {
     exportCanvasStore.setLiveFrameRef(wrapperRef);
     onCleanup(() => exportCanvasStore.setLiveFrameRef(undefined));

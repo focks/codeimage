@@ -31,6 +31,11 @@ export function getInitialFrameState(): FrameState {
     autoWidth: true,
     autoHeight: true,
     scale: 1,
+    // Transient UI flag (never persisted): `true` while the user is dragging a
+    // resize handle. Read by FrameHandler to FREEZE the zoom-to-fit scale for the
+    // gesture and disable the eased refit transition, so the frame follows the
+    // cursor without the refit fighting it. Reset to `false` on drag end.
+    resizing: false,
     width: 0,
     height: 0,
     aspectRatio: null,
@@ -45,6 +50,7 @@ type Commands = {
   setPadding: number;
   setRadius: number;
   setScale: number;
+  setResizing: boolean;
   setAutoWidth: boolean;
   setAutoHeight: boolean;
   setMinWidth: number;
@@ -82,6 +88,12 @@ const frameState = defineStore(() => getInitialFrameState())
       .hold(store.commands.setScale, (scale, {state}) => ({
         ...state,
         scale,
+      }))
+      // Transient — deliberately NOT in the persist watch list below, so toggling
+      // it during a drag never writes to storage.
+      .hold(store.commands.setResizing, (resizing, {state}) => ({
+        ...state,
+        resizing,
       }))
       .hold(store.commands.setAutoWidth, (autoWidth, {state}) => ({
         ...state,

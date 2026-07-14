@@ -18,6 +18,13 @@ export interface FrameState {
   autoHeight: boolean;
   scale: number;
   /**
+   * Transient UI flag (NOT persisted): `true` while a resize-handle drag is in
+   * flight. Freezes the zoom-to-fit scale and disables the eased refit transition
+   * for the duration of the gesture so the frame tracks the cursor without the fit
+   * fighting it (see FrameHandler). Reset to `false` on drag end.
+   */
+  resizing: boolean;
+  /**
    * Explicit window width in px. Only applied when `autoWidth` is `false`; when
    * `autoWidth` is `true` this is ignored and the box is content-driven.
    */

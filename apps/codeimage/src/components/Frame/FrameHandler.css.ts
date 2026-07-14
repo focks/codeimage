@@ -50,6 +50,22 @@ export const content = style({
   position: 'relative',
   width: '100%',
   height: '100%',
+  // The zoom-to-fit scale is applied here as a compositor-only `transform` (set
+  // inline from FrameHandler). Origin top-left so the scaled natural box fills the
+  // scaled `.handler` footprint from its corner (the footprint is the layout box
+  // the grid centres — see FrameHandler.handlerStyle). At 100% no transform is set
+  // and this element behaves exactly as before (issue #42 identity case).
+  transformOrigin: 'top left',
+  selectors: {
+    // Eased refit: when armed (a non-drag scale change — release, panel input,
+    // window resize) the transform animates to the new scale. `transform` ONLY, so
+    // the ease runs on the compositor with no per-frame layout. Absent during a
+    // live drag, so the drag transform tracks the cursor 1:1 with no easing lag.
+    // Mirrors the `data-playback` transition-gating pattern already in the codebase.
+    [`${handler}[data-fit-animate="true"] &`]: {
+      transition: 'transform 200ms cubic-bezier(0.22, 1, 0.36, 1)',
+    },
+  },
 });
 
 /**
